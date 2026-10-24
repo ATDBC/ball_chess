@@ -1,0 +1,84 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import path from "node:path";
+import { MatchStore } from "../../server/store.js";
+import { MatchService } from "../../server/match-service.js";
+
+async function fixture(t, options = {}) {
+  await mkdir(path.join(process.cwd(), ".tmp"), { recursive: true });
+  const directory = await mkdtemp(path.join(process.cwd(), ".tmp", "matches-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new MatchStore({ directory });
+  const service = await MatchService.open({ store });
+  const created = await service.create({ maxPlies: 40, ...options });
+  await service.join(created.matchId, created.playerTokens.left, { name: "L", clientKind: "test" });
+  await service.join(created.matchId, created.playerTokens.right, { name: "R", clientKind: "test" });
+  return { store, service, created };
+}
+
+test("two seats start at version 2 and stale retries do not apply twice", async (t) => {
+  const { service, created } = await fixture(t);
+  const accepted = await service.submitAction(created.matchId, created.playerTokens.left, 2, { type: "move", direction: "up" });
+  assert.equal(accepted.version, 3);
+  await assert.rejects(
+    service.submitAction(created.matchId, created.playerTokens.left, 2, { type: "move", direction: "up" }),
+    (error) => error.code === "STALE_STATE"
+  );
+  const state = await service.getState(created.matchId, created.playerTokens.left);
+  assert.deepEqual(state.players.left.position, [2, 1]);
+  assert.equal(state.plies, 1);
+});
+
+test("concurrent copies of one version can only apply once", async (t) => {
+  const { service, created } = await fixture(t);
+  const attempts = await Promise.allSettled([
+    service.submitAction(created.matchId, created.playerTokens.left, 2, { type: "move", direction: "up" }),
+    service.submitAction(created.matchId, created.playerTokens.left, 2, { type: "move", direction: "left" })
+  ]);
+  assert.equal(attempts.filter((attempt) => attempt.status === "fulfilled").length, 1);
+  const rejected = attempts.find((attempt) => attempt.status === "rejected");
+  assert.equal(rejected.reason.code, "STALE_STATE");
+  const state = await service.getState(created.matchId);
+  assert.equal(state.version, 3);
+  assert.equal(state.plies, 1);
+});
+
+test("restart rebuilds game from accepted actions and hides exported tokens", async (t) => {
+  const { store, service, created } = await fixture(t);
+  await service.submitAction(created.matchId, created.playerTokens.left, 2, { type: "move", direction: "up" });
+  const restored = await MatchService.open({ store });
+  const state = await restored.getState(created.matchId, created.playerTokens.left);
+  assert.deepEqual(state.players.left.position, [2, 1]);
+  const record = await restored.getRecord(created.matchId);
+  assert.equal(JSON.stringify(record).includes("playerTokens"), false);
+  assert.equal(JSON.stringify(record).includes(created.adminToken), false);
+});
+
+test("expired current player loses without advancing plies", async (t) => {
+  const { service, created } = await fixture(t, { turnTimeoutMs: 20 });
+  await new Promise((resolve) => setTimeout(resolve, 35));
+  const state = await service.getState(created.matchId);
+  assert.equal(state.result.reason, "turn_timeout");
+  assert.equal(state.result.winner, "right");
+  assert.equal(state.plies, 0);
+});
+
+test("only admin can abort and aborted games reject later actions", async (t) => {
+  const { service, created } = await fixture(t);
+  await assert.rejects(service.abort(created.matchId, created.playerTokens.left), (error) => error.code === "FORBIDDEN");
+  const aborted = await service.abort(created.matchId, created.adminToken);
+  assert.deepEqual(aborted.result, { kind: "aborted", winner: null, reason: "admin_abort" });
+  assert.equal(aborted.plies, 0);
+  await assert.rejects(
+    service.submitAction(created.matchId, created.playerTokens.left, aborted.version, { type: "move", direction: "up" }),
+    (error) => error.code === "MATCH_FINISHED"
+  );
+});
+
+test("random first player is resolved once into the public config", async (t) => {
+  const { service, created } = await fixture(t, { firstPlayer: "random" });
+  const state = await service.getState(created.matchId);
+  assert.ok(["left", "right"].includes(state.config.firstPlayer));
+  assert.equal(state.currentPlayer, state.config.firstPlayer);
+});
