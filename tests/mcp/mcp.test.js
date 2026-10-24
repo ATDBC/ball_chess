@@ -73,4 +73,18 @@ test("two independent stdio MCP clients share a match and recover from stale act
   });
   assert.equal(rejected.structuredContent.ok, false);
   assert.equal(rejected.structuredContent.state.plies, 1);
+
+  for (let expectedVersion = 3; expectedVersion <= 40; expectedVersion += 1) {
+    const agent = expectedVersion % 2 === 0 ? left : right;
+    const current = await agent.callTool({ name: "get_match_state", arguments: {} });
+    if (current.structuredContent.status === "finished") break;
+    const action = current.structuredContent.legalActions.find((candidate) => candidate.type === "move" && candidate.direction === "up")
+      || current.structuredContent.legalActions[0];
+    const next = await agent.callTool({ name: "submit_action", arguments: { expectedVersion, action } });
+    assert.equal(next.structuredContent.ok, true);
+  }
+  const final = await left.callTool({ name: "get_match_state", arguments: {} });
+  assert.equal(final.structuredContent.status, "finished");
+  assert.equal(final.structuredContent.plies, 23);
+  assert.deepEqual(final.structuredContent.result, { kind: "win", winner: "left", reason: "reached_goal" });
 });
