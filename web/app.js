@@ -1,7 +1,7 @@
 import { MatchApi } from "./api.js";
 import { renderBoard } from "./board.js";
 import { buildAgentPrompt, buildMcpConfig } from "./agent-instructions.js";
-import { canInteract, shouldAcceptSnapshot, wallsRemaining } from "./state-view.js";
+import { canInteract, resolveInteractionMode, shouldAcceptSnapshot, wallsRemaining } from "./state-view.js";
 
 const api = new MatchApi({ baseUrl: "", eventSourceFactory: (url) => new EventSource(url) });
 const byId = (id) => document.getElementById(id);
@@ -24,6 +24,7 @@ let wallOrientation = "h";
 let actionPending = false;
 let eventSource = null;
 let connectionState = "live";
+let refreshFailed = false;
 let actionEntries = new Map();
 let expiredRefresh = null;
 
@@ -132,7 +133,7 @@ function renderControls(state) {
   const actions = state?.legalActions || [];
   const hasMove = actions.some((action) => action.type === "move");
   const hasWall = actions.some((action) => action.type === "place_wall");
-  if (!hasWall && interactionMode === "wall") interactionMode = "move";
+  interactionMode = resolveInteractionMode(state, interactionMode, actionPending);
   byId("mode-move").disabled = !interactive || !hasMove;
   byId("mode-wall").disabled = !interactive || !hasWall;
   byId("wall-orientation").disabled = !interactive || !hasWall;
@@ -175,9 +176,18 @@ async function refreshState() {
   const token = activePlayerToken;
   try {
     const next = await api.state(matchId, token || undefined);
-    if (matchId === activeMatchId && token === activePlayerToken) acceptState(next);
+    if (matchId === activeMatchId && token === activePlayerToken) {
+      acceptState(next);
+      if (refreshFailed) {
+        refreshFailed = false;
+        showError("");
+      }
+    }
   } catch (error) {
-    if (matchId === activeMatchId) showError(error.message);
+    if (matchId === activeMatchId) {
+      refreshFailed = true;
+      showError(error.message);
+    }
   }
 }
 
