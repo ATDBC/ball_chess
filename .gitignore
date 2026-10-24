@@ -1,0 +1,6 @@
+.superpowers/
+node_modules/
+data/matches/
+coverage/
+*.log
+.DS_Store
