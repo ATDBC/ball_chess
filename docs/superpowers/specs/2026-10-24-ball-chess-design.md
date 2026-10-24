@@ -99,7 +99,7 @@
 
 例如横墙 `(1, 5)` 与 `(3, 5)` 可以首尾连接，视觉上形成连续长墙，棋谱中仍是两次独立放墙。
 
-服务端内部把墙转换为被阻挡的相邻格子边。相同方向墙若共享任一单位边则重叠；相对方向墙仅在墙身穿过墙身时判交叉，端点接触不判交叉。客户端不需要计算这些内部边。
+服务端内部把墙转换为被阻挡的相邻格子边。相同方向墙若共享任一单位边则重叠；相对方向墙仅在墙身穿过墙身时判交叉，端点接触不判交叉。设横墙锚点为 `(hx, hy)`、竖墙锚点为 `(vx, vy)`，只有同时满足 `hx < vx < hx + 2` 和 `vy < hy < vy + 2` 时才构成十字交叉；因此仅端点相接的 T 形连接合法。客户端不需要计算这些内部边。
 
 ## 4. 总体架构与模块边界
 
@@ -160,7 +160,7 @@ Kimi / Claude / Codex                     │
 ```json
 {
   "matchId": "m_example",
-  "version": 12,
+  "version": 4,
   "status": "playing",
   "config": {
     "width": 9,
@@ -171,15 +171,20 @@ Kimi / Claude / Codex                     │
     "firstPlayer": "left"
   },
   "players": {
-    "left": { "color": "red", "position": [2, 0], "wallsUsed": 3 },
-    "right": { "color": "blue", "position": [6, 0], "wallsUsed": 2 }
+    "left": { "color": "red", "position": [2, 1], "wallsUsed": 0 },
+    "right": { "color": "blue", "position": [6, 0], "wallsUsed": 1 }
   },
   "walls": [
     { "orientation": "h", "x": 1, "y": 5 }
   ],
   "currentPlayer": "left",
-  "plies": 12,
-  "lastAction": null,
+  "plies": 2,
+  "turnDeadlineAt": null,
+  "lastAction": {
+    "player": "right",
+    "ply": 2,
+    "action": { "type": "place_wall", "orientation": "h", "x": 1, "y": 5 }
+  },
   "result": null
 }
 ```
@@ -187,8 +192,9 @@ Kimi / Claude / Codex                     │
 字段约定：
 
 - `status`：`waiting / playing / finished`。
-- `version`：创建时为 0；席位首次加入、双方就绪、有效行动和结束等权威状态变化时递增。单纯重连、读取状态或 SSE 重订不递增。
+- `version`：创建时为 0；席位首次加入、双方就绪、有效行动和结束等权威状态变化时递增。每次状态迁移只递增一次，第二席位加入并同时开局不会重复递增；单纯重连、读取状态或 SSE 重订不递增。
 - `plies`：只计算有效移动和放墙，不包含加入、非法行动、中止或超时事件。
+- `turnDeadlineAt`：启用回合计时后为 Unix 时间戳（毫秒）；未启用、等待开局或已经结束时为 `null`。
 - `lastAction`：记录最近一次有效行动的玩家、行动和对应序号；初始为 `null`。
 - `firstPlayer`：服务端归一化后的实际先手，不再保留未决定的 `random`。
 - `result`：未结束为 `null`；结束后包含 `kind`、`winner` 和 `reason`。
@@ -207,13 +213,27 @@ MCP 还返回 ASCII 棋盘，帮助大模型理解空间关系；ASCII 只是展
 
 | 接口 | 认证 | 用途 |
 |---|---|---|
-| `POST /api/matches` | 本地创建请求 | 创建对局，返回 `matchId`、`adminToken` 和两个 `playerToken` |
+| `POST /api/matches` | 本地创建请求 | 创建对局，返回 `matchId`、`adminToken` 和两个玩家令牌 |
 | `POST /api/matches/:id/join` | 玩家 Bearer token | 加入或重连席位，可附带显示名和客户端类型 |
 | `GET /api/matches/:id/state` | 可选玩家 Bearer token | 获取公共状态；带玩家令牌时附带席位视角信息 |
+| `GET /api/matches/:id/setup` | 管理员 Bearer token | 重新获取两个席位令牌及 agent 接入信息，不返回管理员令牌 |
 | `POST /api/matches/:id/actions` | 玩家 Bearer token | 提交 `expectedVersion + action` |
 | `POST /api/matches/:id/abort` | 管理员 Bearer token | 中止对局；管理员令牌不能用于走棋 |
 | `GET /api/matches/:id/events` | 本地只读 | SSE 推送公共状态快照 |
 | `GET /api/matches/:id/record` | 本地只读 | 导出移除所有令牌的棋谱 |
+
+创建请求的四个字段都可省略，默认值如下；棋盘尺寸固定为 9 × 13，不由请求覆盖：
+
+```json
+{
+  "wallLimit": null,
+  "maxPlies": 300,
+  "turnTimeoutMs": null,
+  "firstPlayer": "left"
+}
+```
+
+创建响应包含 `matchId`、`adminToken`、`playerTokens: { "left": "p_left_example", "right": "p_right_example" }` 和初始 `state`。浏览器保存 `matchId + adminToken` 用于恢复本地管理界面；玩家令牌可通过上述管理员 `setup` 接口重新读取，公共接口不提供找回能力。
 
 提交行动正文：
 
@@ -287,9 +307,9 @@ SSE 约定：
 data/matches/<matchId>.json
 ```
 
-文件包含配置、实际先手、令牌、有效行动、时间戳、回合截止时间和结果。每次有效行动通过临时文件加替换的方式原子写入；服务启动时重放记录并重建状态。
+文件包含配置、实际先手、令牌、席位首次加入信息、有效行动、时间戳、回合截止时间和结果。创建、席位首次加入、有效行动、超时和中止等每次权威状态变化，都通过临时文件加替换的方式原子写入；服务启动时重放记录并重建状态。
 
-- 回合计时按持久化的截止时间恢复，而不是重启后重新获得完整思考时间。
+- 回合计时按持久化的截止时间恢复，而不是重启后重新获得完整思考时间；恢复时已经过期的回合先结算超时，再接受新行动。
 - 连接状态属于临时状态，重启后等待客户端重连。
 - 对外 `record` 导出始终移除令牌。
 - 损坏记录不被自动覆盖；该对局标记为不可恢复并记录错误，不影响其他对局。
@@ -300,7 +320,7 @@ data/matches/<matchId>.json
 - 默认只绑定 `127.0.0.1`。
 - 玩家和管理员令牌至少包含 128 位随机熵，不写入日志。
 - 静态文件只允许访问明确公开的前端和共享规则文件。
-- 请求体限制为合理的小体积 JSON，拒绝未知行动类型和多余坐标范围。
+- 请求体限制为合理的小体积 JSON，拒绝未知行动类型、未知字段和越界坐标。
 - 首版不开放 CORS，不承诺公网部署安全；显式修改监听地址不意味着已经获得公网加固。
 
 ## 10. 前端交互与视觉设计
