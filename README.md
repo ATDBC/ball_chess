@@ -130,20 +130,23 @@ node examples/bot.js --url http://127.0.0.1:7100 --match "$MATCH_ID" --token "$R
 - `wait_for_turn`：通过 SSE 等待自己回合或终局；心跳和短暂重连不会制造一次新的模型轮次。
 - `submit_action`：携带最新 `expectedVersion` 提交一个 `legalActions` 中的行动；遇到 `STALE_STATE` 或 `ILLEGAL_ACTION` 时读取返回状态后重新选择。
 
-MCP 与 DSH 直接复用 `agent/` 下同一个协议客户端。状态把 HTTP 的完整行动对象压缩为 `legalActions.moves` 和按 `h`、`v` 分组的 `legalActions.walls` 锚点；提交时仍使用标准 `move` 或 `place_wall` 行动对象。模型文本只含紧凑棋盘、版本和合法行动，结构化结果保留程序客户端所需状态。
+MCP 与 DSH 直接复用 `agent/` 下同一个协议客户端。结构化状态在 `legalActionList` 中保留 HTTP 返回的完整行动数组，并通过 `legalActions.moves`、按 `h`/`v` 分组的墙锚点和可无损还原的墙范围提供兼容的紧凑视图。模型文本还包含本局规则、墙配额、双方墙使用情况、版本、截止时间和终局原因；有限墙与无限墙均从实际对局配置派生，不采用固定数量。
 
 平台不会自动启动 Kimi、Claude、Codex 或其他第三方 agent，也不保存模型 API 密钥。自动测试验证了标准 MCP 与两个独立 stdio 测试客户端，不声称已逐一验证所有第三方厂商。
 
 ## DSH Agent 预设
 
-`dsh/ball-chess.overlay.yml` 增加 **Ball Chess player** 预设。它只装配 Ball Chess 工具、专用 persona 和上下文压缩，不装配 shell、文件系统、浏览器、Web、工作流或 subagent 工具。先启动游戏服务，再从 DSH 源码目录运行：
+项目根 `package.json` 把 `dsh/ball-chess.overlay.yml` 声明为本地 DSH bundle，其中增加 **Ball Chess player** 预设。它只装配 Ball Chess 工具、专用 persona 和 Ball Chess 压缩服务，不装配 shell、文件系统、浏览器、Web、工作流或 subagent 工具。先启动游戏服务，再把当前 checkout 安装到 Web profile：
 
 ```powershell
 $env:BALL_CHESS_URL = 'http://127.0.0.1:7100'
-pnpm.cmd dsh web --patch E:\My_project\ball_chess\dsh\ball-chess.overlay.yml
+pnpm.cmd --dir E:\Program\deepseek-harness dsh plugin --profile web add E:\My_project\ball_chess
+pnpm.cmd --dir E:\Program\deepseek-harness dsh web
 ```
 
-新建对话时选择该预设，输入“加入邀请码 … 并开始”。每个 DSH Agent ID 对应独立 credentials 记录；同一会话可在重启后由用户输入“继续对局”恢复，fork/subagent 不继承席位，等待取消保留绑定，观察到终局后删除玩家 token。详细说明见 [`dsh/README.md`](dsh/README.md)。
+新建对话时选择该预设，输入“加入邀请码 … 并开始”。每个 DSH Agent ID 对应独立 credentials 记录；同一会话可在重启后由用户输入“继续对局”恢复，fork/subagent 不继承席位，等待取消保留绑定。观察到终局后，插件把含 token 的绑定原子替换为不含秘密的终局回执，因此模型尚未报告结果时即使进程中断也能恢复。
+
+专用压缩服务继承 DSH `BasicCompactionEngine` 的自动压力、手动 `/compact`、模型切换保护和上下文溢出恢复，只替换摘要策略。默认摘要上限为 4,096 token，这不是正常对局模型的最大输出设置。详细安装、配置与生命周期说明见 [`dsh/README.md`](dsh/README.md)。
 
 ## 持久化与安全边界
 

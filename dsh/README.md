@@ -1,6 +1,6 @@
 # DSH Ball Chess preset
 
-This directory contains the Ball Chess Cordis tool plugin and the local DSH preset overlay. The plugin directly reuses the shared client in `../agent/`; it does not launch an MCP subprocess and does not modify DeepSeek Harness.
+This directory contains the Ball Chess Cordis tool plugin, game-specific compaction service, and preset bundle layer. The tools directly reuse the shared client in `../agent/`; they do not launch an MCP subprocess or modify DeepSeek Harness.
 
 ## Start
 
@@ -11,13 +11,15 @@ cd E:\My_project\ball_chess
 npm.cmd run dev -- --host 127.0.0.1 --port 7100
 ```
 
-Then start DSH from its source checkout with the overlay:
+Install this checkout as a local bundle in the Web profile, then start DSH:
 
 ```powershell
-cd E:\Program\deepseek-harness
 $env:BALL_CHESS_URL = 'http://127.0.0.1:7100'
-pnpm.cmd dsh web --patch E:\My_project\ball_chess\dsh\ball-chess.overlay.yml
+pnpm.cmd --dir E:\Program\deepseek-harness dsh plugin --profile web add E:\My_project\ball_chess
+pnpm.cmd --dir E:\Program\deepseek-harness dsh web
 ```
+
+The profile stores a link to the checkout. The bundle resolves `plugin.js` and `compaction-plugin.js` relative to its own patch file, so moving the project only requires reinstalling the link; the YAML contains no machine-specific absolute module URL. Remove it with `pnpm.cmd --dir E:\Program\deepseek-harness dsh plugin --profile web remove ball-chess`.
 
 Create a conversation with the **Ball Chess player** preset and send:
 
@@ -33,6 +35,26 @@ Create a conversation with the **Ball Chess player** preset and send:
 - The credential record is `ball-chess/s-<sha256(agentId)>`. It stores a pending redemption before the HTTP request and replaces it with the bound seat after success.
 - An interrupted redemption reuses its stored redemption ID. A normal bound resume reconstructs the client when the user asks the conversation to continue.
 - Forks and subagents do not inherit the parent seat. Canceling or archiving a wait closes the SSE request but retains the binding.
-- Observing a finished match deletes the bound player token. The token is never a tool argument, tool result, model-facing string, public match state, or ordinary plugin log field.
+- Observing a finished match atomically replaces the bound player token with a non-secret terminal receipt. A restart before the model reports the result can replay that receipt without network access. The token is never a tool argument, tool result, model-facing string, public match state, or ordinary plugin log field.
 
 The local credentials file protects the normal product data flow; it is not an operating-system isolation mechanism against another process running as the same user with arbitrary file access.
+
+## Rules and compaction
+
+The preset explains the fixed movement, goal, and wall-placement rules. Match-dependent values—including finite or unlimited walls, used and remaining walls, first player, maximum plies, and timeout—come from the current server state. MCP, DSH, and the browser consume the same configuration-derived rule facts. Structured Agent state retains the complete action array as `legalActionList`, preserves the existing grouped `legalActions`, and adds lossless wall ranges for compact model text.
+
+`compaction-plugin.js` extends DSH's `BasicCompactionEngine`. It keeps the base engine's automatic pressure checks, `/compact`, model-switch protection, overflow recovery, durable replacement, and retry behavior; only the summary instruction changes. The checkpoint records match identity, actual rules/configuration, the last observed authoritative state, user instructions, the next tool, and the outcome. It never treats a summarized version as current authority and directs the Agent to refresh when uncertain.
+
+The preset configures:
+
+```yaml
+auto: true
+thresholdRatio: 0.8
+headroomTokens: 65536
+retainTokens: 8192
+maxTokens: 4096
+compactionRetries: 1
+maxOverflowRetries: 1
+```
+
+The 4,096-token cap applies only to the auxiliary summary request. It does not change the gameplay model's normal maximum output. The normal request's configured output reservation still participates in the base engine's pressure calculation.
