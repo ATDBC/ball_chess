@@ -61,6 +61,29 @@ test("wall previews use geometry and noninteractive boards register no handlers"
   assert.equal(preview.attributes.height, "4.5");
 });
 
+test("committed walls use player colors with a neutral legacy fallback", () => {
+  const container = fixture();
+  const state = createGame();
+  state.walls = [
+    { orientation: "h", x: 0, y: 1, player: "left" },
+    { orientation: "v", x: 3, y: 2, player: "right" },
+    { orientation: "h", x: 5, y: 3 }
+  ];
+
+  renderBoard(container, state);
+
+  const tops = findAll(container, (element) => element.attributes.class === "committed-wall");
+  assert.deepEqual(tops.map((element) => ({
+    player: element.attributes["data-player"],
+    fill: element.attributes.fill
+  })), [
+    { player: "left", fill: "url(#wall-left)" },
+    { player: "right", fill: "url(#wall-right)" },
+    { player: "neutral", fill: "url(#wall-neutral)" }
+  ]);
+  assert.equal(findAll(container, (element) => element.attributes.class === "wall-preview").length, 0);
+});
+
 test("interactive board has one focus target and keyboard selects an action", () => {
   const container = fixture();
   const actions = [];

@@ -91,6 +91,28 @@ test("serialize always emits v2 without persisted status", () => {
   assert.equal(raw.result, null);
 });
 
+test("serialized action replay restores wall ownership in public state", () => {
+  const placed = submitMatchAction(
+    playingRecord(),
+    "left",
+    2,
+    { type: "place_wall", orientation: "v", x: 3, y: 2 },
+    130
+  );
+  const serialized = serializeMatch(placed);
+  const restored = restoreMatch(serialized);
+
+  assert.deepEqual(serialized.actions[0], {
+    player: "left",
+    ply: 1,
+    action: { type: "place_wall", orientation: "v", x: 3, y: 2 },
+    at: 130
+  });
+  assert.equal(Object.hasOwn(serialized, "game"), false);
+  assert.deepEqual(restored.game.walls, [{ orientation: "v", x: 3, y: 2, player: "left" }]);
+  assert.deepEqual(toPublicState(restored).walls, [{ orientation: "v", x: 3, y: 2, player: "left" }]);
+});
+
 test("claim occupies one open seat without starting and duplicate claim is idempotent", () => {
   const waiting = waitingRecord({ turnTimeoutMs: 10 });
   const claimed = claimMatchRecord(

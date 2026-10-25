@@ -3,6 +3,12 @@ import { BALL_RADIUS, CELL_SIZE, GRID_X, GRID_Y, WALL_SIDE, cellCenter, wallFace
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
+const WALL_PALETTES = {
+  left: { gradient: "wall-left", side: "#a83d47", stroke: "#a83d47" },
+  right: { gradient: "wall-right", side: "#315e88", stroke: "#315e88" },
+  neutral: { gradient: "wall-neutral", side: "#525d58", stroke: "#68736e" }
+};
+
 function node(document, tag, attributes = {}, text = null) {
   const element = document.createElementNS(SVG_NS, tag);
   for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
@@ -88,9 +94,13 @@ export function renderBoard(container, state, options = {}) {
   addGradientStops(document, red, [["0%", "#e89296"], ["42%", "#d45a62"], ["100%", "#a83d47"]]);
   const blue = node(document, "radialGradient", { id: "ball-blue", cx: "32%", cy: "26%", r: "78%" });
   addGradientStops(document, blue, [["0%", "#91b6d3"], ["42%", "#5689b6"], ["100%", "#315e88"]]);
-  const wallTop = node(document, "linearGradient", { id: "wall-top", x1: "0%", y1: "0%", x2: "0%", y2: "100%" });
-  addGradientStops(document, wallTop, [["0%", "#98a29d"], ["55%", "#7e8984"], ["100%", "#727d78"]]);
-  defs.append(red, blue, wallTop);
+  const wallLeft = node(document, "linearGradient", { id: "wall-left", x1: "0%", y1: "0%", x2: "0%", y2: "100%" });
+  addGradientStops(document, wallLeft, [["0%", "#f09aa0"], ["55%", "#d45a62"], ["100%", "#a83d47"]]);
+  const wallRight = node(document, "linearGradient", { id: "wall-right", x1: "0%", y1: "0%", x2: "0%", y2: "100%" });
+  addGradientStops(document, wallRight, [["0%", "#9ac2df"], ["55%", "#5689b6"], ["100%", "#315e88"]]);
+  const wallNeutral = node(document, "linearGradient", { id: "wall-neutral", x1: "0%", y1: "0%", x2: "0%", y2: "100%" });
+  addGradientStops(document, wallNeutral, [["0%", "#98a29d"], ["55%", "#7e8984"], ["100%", "#727d78"]]);
+  defs.append(red, blue, wallLeft, wallRight, wallNeutral);
   svg.append(defs);
 
   const grid = node(document, "g", { class: "board-grid" });
@@ -120,9 +130,17 @@ export function renderBoard(container, state, options = {}) {
   const wallTops = node(document, "g", { class: "wall-tops" });
   for (const wall of state.walls) {
     const { top, side } = wallFaces(wall);
+    const player = wall.player === "left" || wall.player === "right" ? wall.player : "neutral";
+    const palette = WALL_PALETTES[player];
     wallShadows.append(rect(document, top, { fill: "#303736", opacity: 0.1 }));
-    wallSides.append(rect(document, side, { fill: "#525d58" }));
-    wallTops.append(rect(document, top, { fill: "url(#wall-top)", stroke: "#68736e", "stroke-width": 0.35 }));
+    wallSides.append(rect(document, side, { fill: palette.side }));
+    wallTops.append(rect(document, top, {
+      class: "committed-wall",
+      "data-player": player,
+      fill: `url(#${palette.gradient})`,
+      stroke: palette.stroke,
+      "stroke-width": 0.35
+    }));
   }
   svg.append(wallShadows, wallSides, wallTops);
 

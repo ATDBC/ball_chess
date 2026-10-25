@@ -103,6 +103,7 @@ function terminalReceipt() {
       yourPlayer: "left",
       yourTurn: false,
       legalActions: [],
+      walls: [{ orientation: "h", x: 0, y: 1, player: "left" }],
       plies: 1,
       lastAction: { player: "left", ply: 1, action: { type: "move", direction: "up" } },
       result: { kind: "win", winner: "left", reason: "reached_goal" }
@@ -116,6 +117,18 @@ test("finished records reject forged seats, outcomes, versions, and extra fields
     payload: { version: 1, state: "finished", matchId: "m_done", seat: "left", receipt: terminalReceipt() }
   };
   assert.equal(decodeGrant(record).receipt.state.yourPlayer, "left");
+
+  const legacyWall = structuredClone(record);
+  delete legacyWall.payload.receipt.state.walls[0].player;
+  assert.equal(decodeGrant(legacyWall).receipt.state.walls[0].player, undefined);
+
+  const forgedWallPlayer = structuredClone(record);
+  forgedWallPlayer.payload.receipt.state.walls[0].player = "spectator";
+  assert.throws(() => decodeGrant(forgedWallPlayer), /invalid Ball Chess grant/);
+
+  const extraWallField = structuredClone(record);
+  extraWallField.payload.receipt.state.walls[0].untrusted = true;
+  assert.throws(() => decodeGrant(extraWallField), /invalid Ball Chess grant/);
 
   const forgedSeat = structuredClone(record);
   forgedSeat.payload.receipt.state.yourPlayer = "right";

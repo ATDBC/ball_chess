@@ -65,7 +65,10 @@ function validPlayer(value, seat) {
 }
 
 function validWall(value) {
-  return exactKeys(value, ["orientation", "x", "y"]) && ["h", "v"].includes(value.orientation) &&
+  const fieldsValid = exactKeys(value, ["orientation", "x", "y"]) || (
+    exactKeys(value, ["orientation", "x", "y", "player"]) && playerId(value.player)
+  );
+  return fieldsValid && ["h", "v"].includes(value.orientation) &&
     Number.isInteger(value.x) && Number.isInteger(value.y);
 }
 

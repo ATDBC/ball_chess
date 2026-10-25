@@ -70,3 +70,14 @@ test("a requested wall is validated without enumerating every wall anchor", () =
   }), null);
   assert.equal(wallCountReads, 1);
 });
+
+test("a committed wall records the player who placed it", () => {
+  const game = createGame();
+  const action = { type: "place_wall", orientation: "v", x: 3, y: 2 };
+
+  const next = applyAction(game, "left", action);
+
+  assert.deepEqual(next.walls, [{ orientation: "v", x: 3, y: 2, player: "left" }]);
+  assert.deepEqual(action, { type: "place_wall", orientation: "v", x: 3, y: 2 });
+  assert.deepEqual(game.walls, []);
+});

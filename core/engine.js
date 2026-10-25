@@ -38,7 +38,7 @@ export function applyAction(game, playerId, action) {
   if (action.type === "move") {
     next.players[playerId].position = destinationFor(next.players[playerId].position, action.direction);
   } else {
-    next.walls.push({ orientation: action.orientation, x: action.x, y: action.y });
+    next.walls.push({ orientation: action.orientation, x: action.x, y: action.y, player: playerId });
     next.players[playerId].wallsUsed += 1;
   }
   next.plies += 1;
