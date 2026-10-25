@@ -79,6 +79,87 @@ test("service ready is idempotent, cancellable before start, and starts on the s
   );
 });
 
+test("invitation redemption is serialized, one-time, and idempotent after finish", async (t) => {
+  let now = 100;
+  const codes = ["00000-00000-00000-00000-000000"];
+  const { store, service } = await emptyFixture(t, {
+    now: () => now,
+    generateInvitationCode: () => codes.shift()
+  });
+  const created = await service.create({ config: { maxPlies: 40 } });
+  const invitation = await service.createInvitation(created.matchId, created.adminToken, "left");
+  assert.equal(invitation.code, "00000-00000-00000-00000-000000");
+  assert.equal(invitation.expiresAt, 600_100);
+  assert.deepEqual(invitation.state.seats.left.invitation, { available: true, generation: 1 });
+  assert.equal(JSON.stringify(invitation.state).includes(invitation.code), false);
+
+  now = 110;
+  const ids = ["a".repeat(32), "b".repeat(32)];
+  const attempts = await Promise.allSettled(ids.map((redemptionId) => service.redeemInvitation({
+    code: invitation.code,
+    redemptionId,
+    profile: { displayName: "Agent", clientType: "test" }
+  })));
+  const accepted = attempts.find((attempt) => attempt.status === "fulfilled").value;
+  const rejected = attempts.find((attempt) => attempt.status === "rejected").reason;
+  assert.equal(rejected.code, "INVITE_CONSUMED");
+  assert.equal(accepted.matchId, created.matchId);
+  assert.equal(accepted.seat, "left");
+  assert.equal(typeof accepted.playerToken, "string");
+
+  now = 120;
+  await service.abort(created.matchId, created.adminToken);
+  now = 700_000;
+  const restored = await MatchService.open({ store, now: () => now });
+  t.after(() => restored.close());
+  const retry = await restored.redeemInvitation({
+    code: invitation.code,
+    redemptionId: attempts[0].status === "fulfilled" ? ids[0] : ids[1],
+    profile: { displayName: "Ignored", clientType: "test" }
+  });
+  assert.equal(retry.playerToken, accepted.playerToken);
+  assert.equal(retry.state.status, "finished");
+});
+
+test("invitation generation and redemption reject unauthorized, expired, and unknown codes", async (t) => {
+  let now = 100;
+  const { service } = await emptyFixture(t, {
+    now: () => now,
+    generateInvitationCode: () => "00000-00000-00000-00000-000001"
+  });
+  const created = await service.create({ config: { maxPlies: 40 } });
+  await assert.rejects(
+    service.createInvitation(created.matchId, "wrong", "left"),
+    (error) => error.code === "FORBIDDEN"
+  );
+  const invitation = await service.createInvitation(created.matchId, created.adminToken, "right");
+  now = invitation.expiresAt;
+  await assert.rejects(
+    service.redeemInvitation({
+      code: invitation.code,
+      redemptionId: "a".repeat(32),
+      profile: { displayName: "Agent", clientType: "test" }
+    }),
+    (error) => error.code === "INVITE_EXPIRED"
+  );
+  await assert.rejects(
+    service.redeemInvitation({
+      code: "00000-00000-00000-00000-000002",
+      redemptionId: "a".repeat(32),
+      profile: { displayName: "Agent", clientType: "test" }
+    }),
+    (error) => error.code === "INVITE_INVALID"
+  );
+  await assert.rejects(
+    service.redeemInvitation({
+      code: "not-a-code",
+      redemptionId: "a".repeat(32),
+      profile: { displayName: "Agent", clientType: "test" }
+    }),
+    (error) => error.code === "INVITE_INVALID"
+  );
+});
+
 test("two ready seats start at version 4 and stale retries do not apply twice", async (t) => {
   const { service, created } = await fixture(t);
   const accepted = await service.submitAction(created.matchId, created.playerTokens.left, 4, { type: "move", direction: "up" });

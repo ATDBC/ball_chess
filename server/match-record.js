@@ -305,6 +305,69 @@ export function setReadyMatchRecord(record, seat, ready, now = Date.now()) {
   return next;
 }
 
+export function createInvitationRecord(record, seat, digest, expiresAt, now = Date.now()) {
+  const status = statusFor(record);
+  if (status === "finished") {
+    throw new GameError("MATCH_FINISHED", "Match is finished", { result: record.game.result });
+  }
+  if (status !== "waiting") {
+    throw new GameError("MATCH_ALREADY_STARTED", "Match has already started");
+  }
+  if (record.seats[seat].phase !== "open") {
+    throw new GameError("SEAT_NOT_OPEN", "Seat is not open");
+  }
+  const previous = record.invitations[seat];
+  const next = structuredClone(record);
+  next.invitations[seat] = {
+    generation: (previous?.generation ?? 0) + 1,
+    digest,
+    expiresAt,
+    consumedAt: null,
+    redemptionId: null
+  };
+  next.updatedAt = now;
+  next.version += 1;
+  return next;
+}
+
+export function redeemInvitationRecord(record, seat, digest, redemptionId, profile, now = Date.now()) {
+  const invitation = record.invitations[seat];
+  if (
+    invitation?.digest === digest
+    && invitation.consumedAt !== null
+    && invitation.redemptionId === redemptionId
+  ) {
+    return record;
+  }
+  if (invitation?.digest !== digest) {
+    throw new GameError("INVITE_INVALID", "Invitation code is invalid");
+  }
+  if (invitation.consumedAt !== null) {
+    throw new GameError("INVITE_CONSUMED", "Invitation code has already been used");
+  }
+  if (now >= invitation.expiresAt) {
+    throw new GameError("INVITE_EXPIRED", "Invitation code has expired");
+  }
+  const status = statusFor(record);
+  if (status === "finished") {
+    throw new GameError("MATCH_FINISHED", "Match is finished", { result: record.game.result });
+  }
+  if (status !== "waiting") {
+    throw new GameError("MATCH_ALREADY_STARTED", "Match has already started");
+  }
+  if (record.seats[seat].phase !== "open") {
+    throw new GameError("SEAT_NOT_OPEN", "Seat is not open");
+  }
+
+  const next = structuredClone(record);
+  next.seats[seat] = { phase: "claimed", profile: structuredClone(profile) };
+  next.invitations[seat].consumedAt = now;
+  next.invitations[seat].redemptionId = redemptionId;
+  next.updatedAt = now;
+  next.version += 1;
+  return next;
+}
+
 // Transitional compatibility for token-based clients until the service and
 // clients adopt separate claim and ready requests.
 export function joinMatchRecord(record, seat, profile, now = Date.now()) {

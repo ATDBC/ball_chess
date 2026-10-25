@@ -3,11 +3,18 @@ import { randomBytes } from "node:crypto";
 import { GameError } from "../core/errors.js";
 import { resolveMatchConfig } from "./config.js";
 import {
+  digestInvitationCode,
+  generateInvitationCode as generateCode,
+  INVITATION_TTL_MS
+} from "./invitations.js";
+import {
   abortMatchRecord,
   claimMatchRecord,
+  createInvitationRecord,
   createMatchRecord,
   expireMatchRecord,
   restoreMatch,
+  redeemInvitationRecord,
   serializeMatch,
   setReadyMatchRecord,
   statusFor,
@@ -64,6 +71,7 @@ export class MatchService extends EventEmitter {
     now = Date.now,
     setTimer = setTimeout,
     clearTimer = clearTimeout,
+    generateInvitationCode = generateCode,
     onBackgroundError = (error) => console.error(error)
   } = {}) {
     super();
@@ -71,6 +79,7 @@ export class MatchService extends EventEmitter {
     this.now = now;
     this.setTimer = setTimer;
     this.clearTimer = clearTimer;
+    this.generateInvitationCode = generateInvitationCode;
     this.onBackgroundError = onBackgroundError;
     this.matches = new Map();
     this.timers = new Map();
@@ -209,6 +218,73 @@ export class MatchService extends EventEmitter {
       const candidate = setReadyMatchRecord(record, seat, ready, this.now());
       const current = candidate === record ? record : await this.commit(candidate);
       return toPublicState(current, seat, this.now());
+    });
+  }
+
+  createInvitation(id, adminToken, seat) {
+    if (!["left", "right"].includes(seat)) {
+      throw new GameError("INVALID_REQUEST", "seat must be left or right");
+    }
+    return this.enqueue(id, async () => {
+      const record = this.requireMatch(id);
+      if (!adminToken) throw new GameError("UNAUTHORIZED", "Administrator token is required");
+      if (adminToken !== record.adminToken) throw new GameError("FORBIDDEN", "Administrator token is invalid");
+      const code = this.generateInvitationCode();
+      const digest = digestInvitationCode(code);
+      for (const candidate of this.matches.values()) {
+        if (["left", "right"].some((candidateSeat) => candidate.invitations[candidateSeat]?.digest === digest)) {
+          throw new GameError("INVITE_COLLISION", "Generated invitation code already exists");
+        }
+      }
+      const now = this.now();
+      const candidate = createInvitationRecord(record, seat, digest, now + INVITATION_TTL_MS, now);
+      await this.commit(candidate);
+      return {
+        matchId: id,
+        seat,
+        code,
+        expiresAt: candidate.invitations[seat].expiresAt,
+        generation: candidate.invitations[seat].generation,
+        state: toPublicState(candidate, null, now)
+      };
+    });
+  }
+
+  async redeemInvitation(request) {
+    assertExactObject(request, ["code", "redemptionId", "profile"], ["code", "redemptionId", "profile"], "redemption");
+    if (typeof request.redemptionId !== "string" || !/^[0-9a-f]{32}$/i.test(request.redemptionId)) {
+      throw new GameError("INVALID_REQUEST", "redemptionId must contain exactly 32 hexadecimal characters");
+    }
+    const digest = digestInvitationCode(request.code);
+    const redemptionId = request.redemptionId.toLowerCase();
+    const profile = normalizeProfile(request.profile);
+    const candidates = [];
+    for (const record of this.matches.values()) {
+      for (const seat of ["left", "right"]) {
+        if (record.invitations[seat]?.digest === digest) candidates.push({ matchId: record.id, seat });
+      }
+    }
+    if (candidates.length !== 1) {
+      throw new GameError("INVITE_INVALID", "Invitation code is invalid");
+    }
+    const { matchId, seat } = candidates[0];
+    return this.enqueue(matchId, async () => {
+      const record = this.requireMatch(matchId);
+      const matchingSeats = ["left", "right"].filter(
+        (candidateSeat) => record.invitations[candidateSeat]?.digest === digest
+      );
+      if (matchingSeats.length !== 1 || matchingSeats[0] !== seat) {
+        throw new GameError("INVITE_INVALID", "Invitation code is invalid");
+      }
+      const now = this.now();
+      const candidate = redeemInvitationRecord(record, seat, digest, redemptionId, profile, now);
+      const current = candidate === record ? record : await this.commit(candidate);
+      return {
+        matchId,
+        seat,
+        playerToken: current.playerTokens[seat],
+        state: toPublicState(current, seat, now)
+      };
     });
   }
 

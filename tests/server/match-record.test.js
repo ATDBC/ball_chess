@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import {
   abortMatchRecord,
   claimMatchRecord,
+  createInvitationRecord,
   createMatchRecord,
   expireMatchRecord,
   joinMatchRecord,
   restoreMatch,
+  redeemInvitationRecord,
   serializeMatch,
   setReadyMatchRecord,
   statusFor,
@@ -167,6 +169,58 @@ test("abort clears active invitations and retains consumed redemption receipts",
   const aborted = abortMatchRecord(record, 110);
   assert.equal(aborted.invitations.left, null);
   assert.deepEqual(aborted.invitations.right, record.invitations.right);
+});
+
+test("invitation generations replace only open-seat invitations without exposing secrets", () => {
+  const waiting = waitingRecord();
+  const first = createInvitationRecord(waiting, "left", "a".repeat(64), 700_100, 100);
+  assert.equal(first.invitations.left.generation, 1);
+  assert.equal(first.version, 1);
+  const second = createInvitationRecord(first, "left", "b".repeat(64), 700_110, 110);
+  assert.equal(second.invitations.left.generation, 2);
+  assert.equal(second.version, 2);
+  const publicState = toPublicState(second, null, 110);
+  assert.deepEqual(publicState.seats.left.invitation, { available: true, generation: 2 });
+  assert.equal(JSON.stringify(publicState).includes("b".repeat(64)), false);
+
+  const claimed = claimMatchRecord(second, "left", {}, 120);
+  assert.equal(claimed.invitations.left, null);
+  assert.throws(
+    () => createInvitationRecord(claimed, "left", "c".repeat(64), 700_120, 120),
+    (error) => error.code === "SEAT_NOT_OPEN"
+  );
+});
+
+test("redemption is one-time, exact-expiry aware, and retry-idempotent", () => {
+  const digest = "a".repeat(64);
+  const redemptionId = "b".repeat(32);
+  const invited = createInvitationRecord(waitingRecord(), "left", digest, 200, 100);
+  const redeemed = redeemInvitationRecord(invited, "left", digest, redemptionId, {}, 150);
+  assert.equal(redeemed.seats.left.phase, "claimed");
+  assert.equal(redeemed.invitations.left.consumedAt, 150);
+  assert.equal(redeemed.invitations.left.redemptionId, redemptionId);
+  assert.strictEqual(
+    redeemInvitationRecord(redeemed, "left", digest, redemptionId, {}, 500),
+    redeemed
+  );
+  assert.throws(
+    () => redeemInvitationRecord(redeemed, "left", digest, "c".repeat(32), {}, 151),
+    (error) => error.code === "INVITE_CONSUMED"
+  );
+
+  const expiring = createInvitationRecord(waitingRecord(), "right", digest, 200, 100);
+  assert.deepEqual(toPublicState(expiring, null, 200).seats.right.invitation, {
+    available: false,
+    generation: 1
+  });
+  assert.throws(
+    () => redeemInvitationRecord(expiring, "right", digest, redemptionId, {}, 200),
+    (error) => error.code === "INVITE_EXPIRED"
+  );
+  assert.throws(
+    () => redeemInvitationRecord(expiring, "right", "d".repeat(64), redemptionId, {}, 150),
+    (error) => error.code === "INVITE_INVALID"
+  );
 });
 
 test("restore migrates waiting v1 seats to open and claimed", () => {

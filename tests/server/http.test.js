@@ -135,6 +135,62 @@ test("HTTP ready validates booleans and starts only after both seats are ready",
   assert.equal((await afterStart.json()).error.code, "MATCH_ALREADY_STARTED");
 });
 
+test("HTTP invitation generation and redemption expose one seat credential once", async (t) => {
+  const { base } = await fixture(t, {
+    generateInvitationCode: () => "00000-00000-00000-00000-000003"
+  });
+  const createdResponse = await fetch(`${base}/api/matches`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ config: { maxPlies: 40 } })
+  });
+  const created = await createdResponse.json();
+  const generatedResponse = await fetch(`${base}/api/matches/${created.matchId}/invitations`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${created.adminToken}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ seat: "right" })
+  });
+  assert.equal(generatedResponse.status, 201);
+  const generated = await generatedResponse.json();
+  assert.equal(generated.code, "00000-00000-00000-00000-000003");
+  assert.equal(JSON.stringify(generated.state).includes(generated.code), false);
+
+  const redeem = (redemptionId) => fetch(`${base}/api/invitations/redeem`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      code: generated.code,
+      redemptionId,
+      profile: { displayName: "DSH", clientType: "dsh" }
+    })
+  });
+  const acceptedResponse = await redeem("a".repeat(32));
+  assert.equal(acceptedResponse.status, 200);
+  const accepted = await acceptedResponse.json();
+  assert.equal(accepted.matchId, created.matchId);
+  assert.equal(accepted.seat, "right");
+  assert.equal(typeof accepted.playerToken, "string");
+  assert.equal(Object.hasOwn(accepted, "playerTokens"), false);
+
+  const consumed = await redeem("b".repeat(32));
+  assert.equal(consumed.status, 409);
+  assert.equal((await consumed.json()).error.code, "INVITE_CONSUMED");
+  const unknown = await fetch(`${base}/api/invitations/redeem`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      code: "00000-00000-00000-00000-000004",
+      redemptionId: "c".repeat(32),
+      profile: { displayName: "DSH", clientType: "dsh" }
+    })
+  });
+  assert.equal(unknown.status, 404);
+  assert.equal((await unknown.json()).error.code, "INVITE_INVALID");
+});
+
 test("HTTP actions, errors, safe export and SSE share authoritative state", { timeout: 10000 }, async (t) => {
   const { base } = await fixture(t);
   const created = await createMatch(base);

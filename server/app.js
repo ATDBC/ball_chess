@@ -21,8 +21,14 @@ export function createApp({ service, webRoot, coreRoot }) {
         sendJson(res, 201, created);
         return;
       }
+      if (pathname === "/api/invitations/redeem" && req.method === "POST") {
+        const body = await readJson(req);
+        assertBodyKeys(body, ["code", "redemptionId", "profile"], ["code", "redemptionId", "profile"]);
+        sendJson(res, 200, await service.redeemInvitation(body));
+        return;
+      }
 
-      const route = /^\/api\/matches\/([^/]+)\/(join|ready|state|setup|actions|abort|events|record)$/.exec(pathname);
+      const route = /^\/api\/matches\/([^/]+)\/(join|ready|invitations|state|setup|actions|abort|events|record)$/.exec(pathname);
       if (route) {
         const matchId = decodeURIComponent(route[1]);
         const operation = route[2];
@@ -40,6 +46,12 @@ export function createApp({ service, webRoot, coreRoot }) {
             throw Object.assign(new Error("ready must be a boolean"), { code: "INVALID_REQUEST", details: {} });
           }
           sendJson(res, 200, await service.setReady(matchId, getBearer(req), body.ready));
+          return;
+        }
+        if (operation === "invitations" && req.method === "POST") {
+          const body = await readJson(req);
+          assertBodyKeys(body, ["seat"], ["seat"]);
+          sendJson(res, 201, await service.createInvitation(matchId, getBearer(req), body.seat));
           return;
         }
         if (operation === "state" && req.method === "GET") {
