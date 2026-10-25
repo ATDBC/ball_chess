@@ -69,6 +69,63 @@ test("projection preserves actions, adds a compact summary, and never adds crede
   assert.ok(!JSON.stringify(projected).includes("playerToken"));
 });
 
+test("decision projection uses perspective aliases without rotating absolute coordinates", () => {
+  const base = {
+    ...createGame({ wallLimit: 6 }), matchId: "m_perspective", version: 3, status: "playing",
+    yourTurn: true, legalActions: [
+      { type: "move", direction: "up" },
+      { type: "move", direction: "right" },
+      { type: "place_wall", orientation: "h", x: 1, y: 2 },
+      { type: "place_wall", orientation: "v", x: 3, y: 4 }
+    ]
+  };
+  const left = projectState({ ...base, yourPlayer: "left" });
+  assert.deepEqual(left.decision.actor.you, {
+    seat: "left", color: "red", position: [2, 0], goal: { axis: "y", value: 12 },
+    walls: { used: 0, remaining: 6 }
+  });
+  assert.equal(left.decision.actor.opponent.seat, "right");
+  assert.deepEqual(left.decision.legal.moves, [
+    { id: "move:up", action: { type: "move", direction: "up" }, to: [2, 1] },
+    { id: "move:right", action: { type: "move", direction: "right" }, to: [3, 0] }
+  ]);
+  assert.deepEqual(left.decision.legal.walls.h, {
+    count: 1,
+    idFormat: "wall:h:<x>:<y>",
+    ranges: [{ y: 2, fromX: 1, toX: 1 }]
+  });
+  assert.deepEqual(left.decision.legal.walls.v, {
+    count: 1,
+    idFormat: "wall:v:<x>:<y>",
+    ranges: [{ y: 4, fromX: 3, toX: 3 }]
+  });
+
+  const right = projectState({ ...base, yourPlayer: "right" });
+  assert.equal(right.decision.actor.you.seat, "right");
+  assert.deepEqual(right.decision.actor.you.position, [6, 0]);
+  assert.equal(right.decision.actor.opponent.seat, "left");
+  assert.deepEqual(right.decision.legal.moves[0].to, [6, 1]);
+});
+
+test("decision projection defines coordinates and both wall directions exactly", () => {
+  const projected = projectState({
+    ...createGame(), matchId: "m_coordinates", version: 2, status: "playing",
+    yourPlayer: "left", yourTurn: true, legalActions: []
+  });
+  assert.deepEqual(projected.decision.coordinates, {
+    origin: [0, 0],
+    xIncreases: "right",
+    yIncreases: "up toward the goal row",
+    cellBounds: { x: [0, 8], y: [0, 12] },
+    walls: {
+      h: "wall:h:x:y blocks (x,y-1)<->(x,y) and (x+1,y-1)<->(x+1,y)",
+      v: "wall:v:x:y blocks (x-1,y)<->(x,y) and (x-1,y+1)<->(x,y+1)"
+    }
+  });
+  assert.match(projected.ascii, /12\s/);
+  assert.match(projected.ascii, /0 1 2 3 4 5 6 7 8/);
+});
+
 test("wall range compression is lossless across gaps and orientations", () => {
   const legalActions = [
     { type: "place_wall", orientation: "h", x: 0, y: 1 },
@@ -89,6 +146,7 @@ test("wall range compression is lossless across gaps and orientations", () => {
   assert.match(text, /walls=finite limit=4 left used=0 remaining=4 right used=0 remaining=4/);
   assert.match(text, /deadline=40000/);
   assert.match(text, /walls\.h=y1:x0-1,x3/);
+  assert.match(text, /wall:v:x:y blocks \(x-1,y\)<->\(x,y\)/);
 });
 
 test("agent text is compact and action-oriented", () => {
@@ -98,8 +156,9 @@ test("agent text is compact and action-oriented", () => {
   }) });
   assert.match(text, /TURN m_test v4 left/);
   assert.match(text, /moves=up/);
+  assert.match(text, /move:up->\(2,1\)/);
   assert.match(text, /walls=unlimited left used=0 right used=0/);
-  assert.ok(text.length < 900);
+  assert.ok(text.length < 1400);
 });
 
 test("finished text carries the authoritative outcome and forbids more actions", () => {

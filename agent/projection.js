@@ -1,7 +1,21 @@
 import { HEIGHT, WIDTH } from "../core/constants.js";
 import { cellEdgeKey } from "../core/coordinates.js";
+import { destinationFor } from "../core/movement.js";
 import { describeMatchRules, describeWallBudgets } from "../core/rule-description.js";
+import { otherPlayer } from "../core/state.js";
 import { buildBlockedEdges } from "../core/walls.js";
+import { formatActionId } from "./action-id.js";
+
+const COORDINATES = Object.freeze({
+  origin: [0, 0],
+  xIncreases: "right",
+  yIncreases: "up toward the goal row",
+  cellBounds: { x: [0, WIDTH - 1], y: [0, HEIGHT - 1] },
+  walls: {
+    h: "wall:h:x:y blocks (x,y-1)<->(x,y) and (x+1,y-1)<->(x+1,y)",
+    v: "wall:v:x:y blocks (x-1,y)<->(x,y) and (x-1,y+1)<->(x,y+1)"
+  }
+});
 
 export function toAscii(state) {
   const blocked = buildBlockedEdges(state.walls);
@@ -22,11 +36,55 @@ export function toAscii(state) {
         if (y > 0) horizontal += " ";
       }
     }
-    lines.push(cells);
-    if (y > 0) lines.push(horizontal);
+    lines.push(`${String(y).padStart(2)} ${cells}`);
+    if (y > 0) lines.push(`   ${horizontal}`);
   }
+  lines.push(`   ${Array.from({ length: WIDTH }, (_, x) => x).join(" ")}`);
   return lines.join("\n");
 }
+
+function actorView(state, seat, budgets) {
+  const player = state.players[seat];
+  return {
+    seat,
+    color: player.color,
+    position: [...player.position],
+    goal: { axis: "y", value: HEIGHT - 1 },
+    walls: structuredClone(budgets[seat])
+  };
+}
+
+function projectDecision(state, legalActionList, wallBudgets) {
+  if (!state.yourPlayer) return null;
+  const opponent = otherPlayer(state.yourPlayer);
+  const moves = legalActionList.filter((action) => action.type === "move").map((action) => ({
+    id: formatActionId(action),
+    action: structuredClone(action),
+    to: destinationFor(state.players[state.yourPlayer].position, action.direction)
+  }));
+  const wallCoordinates = { h: [], v: [] };
+  for (const action of legalActionList) {
+    if (action.type === "place_wall") wallCoordinates[action.orientation].push([action.x, action.y]);
+  }
+  const wallRanges = compressWallCoordinates(wallCoordinates);
+  return {
+    actor: {
+      currentPlayer: state.currentPlayer,
+      yourTurn: Boolean(state.yourTurn),
+      you: actorView(state, state.yourPlayer, wallBudgets),
+      opponent: actorView(state, opponent, wallBudgets)
+    },
+    coordinates: structuredClone(COORDINATES),
+    legal: {
+      moves,
+      walls: {
+        h: { count: wallCoordinates.h.length, idFormat: "wall:h:<x>:<y>", ranges: wallRanges.h },
+        v: { count: wallCoordinates.v.length, idFormat: "wall:v:<x>:<y>", ranges: wallRanges.v }
+      }
+    }
+  };
+}
+
 export function projectState(state) {
   const projected = structuredClone(state);
   delete projected.adminToken;
@@ -35,10 +93,12 @@ export function projectState(state) {
   projected.ascii = toAscii(state);
   projected.rules = describeMatchRules(state.config);
   projected.wallBudgets = describeWallBudgets(state);
+  const legalActionList = Array.isArray(state.legalActions) ? state.legalActions : (state.legalActionList || []);
+  projected.decision = projectDecision(state, legalActionList, projected.wallBudgets);
   if (Array.isArray(state.legalActions)) {
-    projected.legalActionList = structuredClone(state.legalActions);
+    projected.legalActionList = structuredClone(legalActionList);
     const legalActions = { moves: [], walls: { h: [], v: [] } };
-    for (const action of state.legalActions) {
+    for (const action of legalActionList) {
       if (action.type === "move") legalActions.moves.push(action.direction);
       if (action.type === "place_wall") legalActions.walls[action.orientation].push([action.x, action.y]);
     }
@@ -86,6 +146,29 @@ function legalText(summary) {
   return `moves=${summary.moves.join(",") || "-"} walls.h=${rangeText(summary.wallRanges.h)} walls.v=${rangeText(summary.wallRanges.v)}`;
 }
 
+function actorText(decision) {
+  if (!decision) return "";
+  const render = (actor) => {
+    const remaining = Object.hasOwn(actor.walls, "remaining") ? ` remaining=${actor.walls.remaining}` : "";
+    return `${actor.seat}/${actor.color} at=(${actor.position.join(",")}) goal=y${actor.goal.value} wallsUsed=${actor.walls.used}${remaining}`;
+  };
+  return `you=${render(decision.actor.you)} opponent=${render(decision.actor.opponent)}`;
+}
+
+function coordinatesText(decision) {
+  if (!decision) return [];
+  return [
+    "coordinates=origin(0,0) x->right y->goal/top",
+    `${decision.coordinates.walls.h}; ${decision.coordinates.walls.v}`
+  ];
+}
+
+function decisionLegalText(decision) {
+  if (!decision) return "";
+  const moves = decision.legal.moves.map(({ id, to }) => `${id}->(${to.join(",")})`).join(",") || "-";
+  return `actionIds moves=${moves} wallFormats=${decision.legal.walls.h.idFormat}|${decision.legal.walls.v.idFormat}`;
+}
+
 function rulesText(rules) {
   if (!rules) return "";
   const timeout = rules.turnTimeoutMs === null ? "none" : rules.turnTimeoutMs;
@@ -127,6 +210,9 @@ export function renderAgentResult(result) {
   if (rules) lines.push(rules);
   const walls = wallText(state.wallBudgets);
   if (walls) lines.push(walls);
+  const actor = actorText(state.decision);
+  if (actor) lines.push(actor);
+  lines.push(...coordinatesText(state.decision));
   lines.push(`current=${state.currentPlayer || "none"} yourTurn=${Boolean(state.yourTurn)} deadline=${state.turnDeadlineAt ?? "none"}`);
   const seats = seatsText(state.seats);
   if (seats) lines.push(seats);
@@ -134,6 +220,8 @@ export function renderAgentResult(result) {
   if (state.ascii) lines.push(state.ascii);
   const legal = legalText(state.legalActions);
   if (legal) lines.push(legal);
+  const decisionLegal = decisionLegalText(state.decision);
+  if (decisionLegal) lines.push(decisionLegal);
   if (state.result) {
     lines.push(`outcome=${state.result.kind} winner=${state.result.winner ?? "none"} reason=${state.result.reason}`);
     lines.push("The match is finished; do not submit more actions.");

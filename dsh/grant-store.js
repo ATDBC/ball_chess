@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import { projectState } from "../agent/projection.js";
 import { describeMatchRules, describeWallBudgets } from "../core/rule-description.js";
 
 function fail(detail = "") {
@@ -101,7 +102,7 @@ function validEmptyLegalActions(value) {
 const TERMINAL_STATE_KEYS = [
   "matchId", "version", "status", "config", "players", "walls", "currentPlayer", "plies", "lastAction",
   "result", "turnDeadlineAt", "seats", "yourPlayer", "yourTurn", "legalActions", "ascii", "rules",
-  "wallBudgets", "legalActionList"
+  "wallBudgets", "legalActionList", "decision"
 ];
 
 function validTerminalState(state, matchId, seat) {
@@ -119,7 +120,10 @@ function validTerminalState(state, matchId, seat) {
   }
   const rulesValid = isDeepStrictEqual(state.rules, describeMatchRules(state.config));
   const budgetsValid = isDeepStrictEqual(state.wallBudgets, describeWallBudgets(state));
-  if (!rulesValid || !budgetsValid) return false;
+  const { decision, ...withoutDecision } = state;
+  const projected = projectState({ ...withoutDecision, legalActions: state.legalActionList });
+  const decisionValid = isDeepStrictEqual(decision, projected.decision);
+  if (!rulesValid || !budgetsValid || !decisionValid) return false;
   if (state.lastAction !== null && state.lastAction.ply !== state.plies) return false;
   return true;
 }
