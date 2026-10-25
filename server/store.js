@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { assertStoredMatchV1 } from "./match-schema.js";
 
 export class MatchStore {
   constructor({ directory }) {
@@ -28,7 +29,7 @@ export class MatchStore {
       const matchId = path.basename(file, ".json");
       try {
         const record = JSON.parse(await readFile(path.join(this.directory, file), "utf8"));
-        if (record.schemaVersion !== 1 || record.id !== matchId || !Array.isArray(record.actions)) throw new Error("Invalid match record schema");
+        assertStoredMatchV1(record, matchId);
         records.push(record);
       } catch (error) {
         failures.push({ matchId, file, message: error.message });
