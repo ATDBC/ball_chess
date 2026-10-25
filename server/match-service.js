@@ -4,11 +4,12 @@ import { GameError } from "../core/errors.js";
 import { resolveMatchConfig } from "./config.js";
 import {
   abortMatchRecord,
+  claimMatchRecord,
   createMatchRecord,
   expireMatchRecord,
-  joinMatchRecord,
   restoreMatch,
   serializeMatch,
+  setReadyMatchRecord,
   statusFor,
   submitMatchAction,
   toPublicState
@@ -18,11 +19,44 @@ function makeToken() {
   return randomBytes(16).toString("base64url");
 }
 
-function normalizeProfile(profile = {}) {
-  const normalized = {};
-  if (typeof profile.name === "string" && profile.name.trim()) normalized.name = profile.name.trim().slice(0, 80);
-  if (typeof profile.clientKind === "string" && profile.clientKind.trim()) normalized.clientKind = profile.clientKind.trim().slice(0, 40);
-  return normalized;
+function assertExactObject(value, allowed, required, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new GameError("INVALID_REQUEST", `${label} must be an object`);
+  }
+  for (const key of Object.keys(value)) {
+    if (!allowed.includes(key)) throw new GameError("INVALID_REQUEST", `Unknown ${label} field: ${key}`);
+  }
+  for (const key of required) {
+    if (!Object.hasOwn(value, key)) throw new GameError("INVALID_REQUEST", `Missing ${label} field: ${key}`);
+  }
+}
+
+function normalizeProfile(profile) {
+  assertExactObject(profile, ["displayName", "clientType"], ["displayName", "clientType"], "profile");
+  if (typeof profile.displayName !== "string" || !profile.displayName.trim()) {
+    throw new GameError("INVALID_REQUEST", "profile.displayName must be a non-empty string");
+  }
+  if (typeof profile.clientType !== "string" || !profile.clientType.trim()) {
+    throw new GameError("INVALID_REQUEST", "profile.clientType must be a non-empty string");
+  }
+  return {
+    displayName: profile.displayName.trim().slice(0, 80),
+    clientType: profile.clientType.trim().slice(0, 40)
+  };
+}
+
+function normalizeCreateRequest(options) {
+  assertExactObject(options, ["config", "claim"], [], "create request");
+  const config = resolveMatchConfig(options.config ?? {});
+  if (options.claim === undefined) return { config, claim: null };
+  assertExactObject(options.claim, ["seat", "profile"], ["seat", "profile"], "claim");
+  if (!["left", "right"].includes(options.claim.seat)) {
+    throw new GameError("INVALID_REQUEST", "claim.seat must be left or right");
+  }
+  return {
+    config,
+    claim: { seat: options.claim.seat, profile: normalizeProfile(options.claim.profile) }
+  };
 }
 
 export class MatchService extends EventEmitter {
@@ -138,21 +172,41 @@ export class MatchService extends EventEmitter {
   }
 
   async create(options = {}) {
-    const config = resolveMatchConfig(options);
+    const { config, claim } = normalizeCreateRequest(options);
     let id;
     do id = `m_${randomBytes(9).toString("base64url")}`; while (this.matches.has(id));
     const adminToken = makeToken();
     const playerTokens = { left: makeToken(), right: makeToken() };
-    const record = createMatchRecord({ id, adminToken, playerTokens, config, now: this.now() });
+    const createdAt = this.now();
+    let record = createMatchRecord({ id, adminToken, playerTokens, config, now: createdAt });
+    if (claim) record = claimMatchRecord(record, claim.seat, claim.profile, createdAt);
     await this.commit(record);
-    return { matchId: id, adminToken, playerTokens, state: toPublicState(record, null, this.now()) };
+    const response = { matchId: id, adminToken, state: toPublicState(record, null, this.now()) };
+    if (claim) {
+      response.seat = claim.seat;
+      response.playerToken = playerTokens[claim.seat];
+    }
+    return response;
   }
 
-  join(id, token, profile = {}) {
+  join(id, token, profile) {
     return this.enqueue(id, async () => {
       const record = this.requireMatch(id);
       const seat = this.seatForToken(record, token);
-      const candidate = joinMatchRecord(record, seat, normalizeProfile(profile), this.now());
+      const candidate = claimMatchRecord(record, seat, normalizeProfile(profile), this.now());
+      const current = candidate === record ? record : await this.commit(candidate);
+      return toPublicState(current, seat, this.now());
+    });
+  }
+
+  setReady(id, token, ready) {
+    if (typeof ready !== "boolean") {
+      throw new GameError("INVALID_REQUEST", "ready must be a boolean");
+    }
+    return this.enqueue(id, async () => {
+      const record = this.requireMatch(id);
+      const seat = this.seatForToken(record, token);
+      const candidate = setReadyMatchRecord(record, seat, ready, this.now());
       const current = candidate === record ? record : await this.commit(candidate);
       return toPublicState(current, seat, this.now());
     });

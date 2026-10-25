@@ -30,21 +30,110 @@ async function createMatch(base, config = { maxPlies: 40 }) {
   const response = await fetch(`${base}/api/matches`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(config)
+    body: JSON.stringify({ config })
   });
   assert.equal(response.status, 201);
-  return response.json();
+  const created = await response.json();
+  const setupResponse = await fetch(`${base}/api/matches/${created.matchId}/setup`, {
+    headers: { authorization: `Bearer ${created.adminToken}` }
+  });
+  assert.equal(setupResponse.status, 200);
+  const setup = await setupResponse.json();
+  return { ...created, playerTokens: setup.playerTokens };
 }
 
 async function join(base, created, seat) {
   const response = await fetch(`${base}/api/matches/${created.matchId}/join`, {
     method: "POST",
     headers: { authorization: `Bearer ${created.playerTokens[seat]}`, "content-type": "application/json" },
-    body: "{}"
+    body: JSON.stringify({ displayName: seat, clientType: "test" })
   });
   assert.equal(response.status, 200);
   return response.json();
 }
+
+async function ready(base, created, seat, value = true) {
+  const response = await fetch(`${base}/api/matches/${created.matchId}/ready`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${created.playerTokens[seat]}`, "content-type": "application/json" },
+    body: JSON.stringify({ ready: value })
+  });
+  assert.equal(response.status, 200);
+  return response.json();
+}
+
+test("HTTP creation can atomically claim one seat without exposing the other token", async (t) => {
+  const { base } = await fixture(t);
+  const response = await fetch(`${base}/api/matches`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      config: { maxPlies: 40 },
+      claim: {
+        seat: "left",
+        profile: { displayName: "Browser", clientType: "browser" }
+      }
+    })
+  });
+  const created = await response.json();
+  assert.equal(response.status, 201);
+  assert.equal(created.seat, "left");
+  assert.equal(typeof created.playerToken, "string");
+  assert.equal(Object.hasOwn(created, "playerTokens"), false);
+  assert.equal(created.state.seats.left.phase, "claimed");
+});
+
+test("HTTP ready validates booleans and starts only after both seats are ready", async (t) => {
+  const { base } = await fixture(t);
+  const createdResponse = await fetch(`${base}/api/matches`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ config: { maxPlies: 40 } })
+  });
+  const created = await createdResponse.json();
+  const setup = await fetch(`${base}/api/matches/${created.matchId}/setup`, {
+    headers: { authorization: `Bearer ${created.adminToken}` }
+  }).then((response) => response.json());
+  for (const seat of ["left", "right"]) {
+    const joined = await fetch(`${base}/api/matches/${created.matchId}/join`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${setup.playerTokens[seat]}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({ displayName: seat, clientType: "test" })
+    });
+    assert.equal(joined.status, 200);
+  }
+
+  const invalid = await fetch(`${base}/api/matches/${created.matchId}/ready`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${setup.playerTokens.left}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ ready: "yes" })
+  });
+  assert.equal(invalid.status, 400);
+
+  const setReady = (seat, ready) => fetch(`${base}/api/matches/${created.matchId}/ready`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${setup.playerTokens[seat]}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ ready })
+  });
+  const left = await setReady("left", true);
+  assert.equal(left.status, 200);
+  assert.equal((await left.json()).status, "waiting");
+  const right = await setReady("right", true);
+  assert.equal(right.status, 200);
+  assert.equal((await right.json()).status, "playing");
+  const afterStart = await setReady("left", false);
+  assert.equal(afterStart.status, 409);
+  assert.equal((await afterStart.json()).error.code, "MATCH_ALREADY_STARTED");
+});
 
 test("HTTP actions, errors, safe export and SSE share authoritative state", { timeout: 10000 }, async (t) => {
   const { base } = await fixture(t);
@@ -53,10 +142,12 @@ test("HTTP actions, errors, safe export and SSE share authoritative state", { ti
   const rightAuth = { authorization: `Bearer ${created.playerTokens.right}` };
   await join(base, created, "left");
   await join(base, created, "right");
+  await ready(base, created, "left");
+  await ready(base, created, "right");
   const response = await fetch(`${base}/api/matches/${created.matchId}/actions`, {
     method: "POST",
     headers: { ...leftAuth, "content-type": "application/json" },
-    body: JSON.stringify({ expectedVersion: 2, action: { type: "move", direction: "up" } })
+    body: JSON.stringify({ expectedVersion: 4, action: { type: "move", direction: "up" } })
   });
   assert.equal(response.status, 200);
 
@@ -65,7 +156,7 @@ test("HTTP actions, errors, safe export and SSE share authoritative state", { ti
   const stale = await fetch(`${base}/api/matches/${created.matchId}/actions`, {
     method: "POST",
     headers: { ...leftAuth, "content-type": "application/json" },
-    body: JSON.stringify({ expectedVersion: 2, action: { type: "move", direction: "up" } })
+    body: JSON.stringify({ expectedVersion: 4, action: { type: "move", direction: "up" } })
   });
   assert.equal(stale.status, 409);
   assert.equal((await stale.json()).state.plies, 1);
@@ -96,13 +187,13 @@ test("HTTP actions, errors, safe export and SSE share authoritative state", { ti
       buffer += decoder.decode(value, { stream: true });
     }
   }
-  assert.equal((await nextSse()).version, 3);
+  assert.equal((await nextSse()).version, 5);
   await fetch(`${base}/api/matches/${created.matchId}/actions`, {
     method: "POST",
     headers: { ...rightAuth, "content-type": "application/json" },
-    body: JSON.stringify({ expectedVersion: 3, action: { type: "move", direction: "up" } })
+    body: JSON.stringify({ expectedVersion: 5, action: { type: "move", direction: "up" } })
   });
-  assert.equal((await nextSse()).version, 4);
+  assert.equal((await nextSse()).version, 6);
   await reader.cancel();
 });
 
@@ -119,10 +210,12 @@ test("request validation and admin setup do not expose the admin token", async (
   const created = await createMatch(base);
   await join(base, created, "left");
   await join(base, created, "right");
+  await ready(base, created, "left");
+  await ready(base, created, "right");
   const illegal = await fetch(`${base}/api/matches/${created.matchId}/actions`, {
     method: "POST",
     headers: { authorization: `Bearer ${created.playerTokens.left}`, "content-type": "application/json" },
-    body: JSON.stringify({ expectedVersion: 2, action: { type: "move", direction: "down" } })
+    body: JSON.stringify({ expectedVersion: 4, action: { type: "move", direction: "down" } })
   });
   assert.equal(illegal.status, 422);
   assert.equal((await illegal.json()).state.plies, 0);
@@ -148,6 +241,8 @@ test("an action at the deadline returns the committed timeout state", async (t) 
   const created = await createMatch(base, { maxPlies: 40, turnTimeoutMs: 10 });
   await join(base, created, "left");
   await join(base, created, "right");
+  await ready(base, created, "left");
+  await ready(base, created, "right");
   now = 1_010;
 
   const response = await fetch(`${base}/api/matches/${created.matchId}/actions`, {
@@ -157,14 +252,14 @@ test("an action at the deadline returns the committed timeout state", async (t) 
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      expectedVersion: 2,
+      expectedVersion: 4,
       action: { type: "move", direction: "up" }
     })
   });
   const body = await response.json();
   assert.equal(response.status, 409);
   assert.equal(body.error.code, "TURN_EXPIRED");
-  assert.equal(body.state.version, 3);
+  assert.equal(body.state.version, 5);
   assert.equal(body.state.result.reason, "turn_timeout");
   assert.equal(body.state.plies, 0);
 });

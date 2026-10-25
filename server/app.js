@@ -22,15 +22,24 @@ export function createApp({ service, webRoot, coreRoot }) {
         return;
       }
 
-      const route = /^\/api\/matches\/([^/]+)\/(join|state|setup|actions|abort|events|record)$/.exec(pathname);
+      const route = /^\/api\/matches\/([^/]+)\/(join|ready|state|setup|actions|abort|events|record)$/.exec(pathname);
       if (route) {
         const matchId = decodeURIComponent(route[1]);
         const operation = route[2];
         if (operation === "join" && req.method === "POST") {
           const body = await readJson(req);
-          assertBodyKeys(body, ["name", "clientKind"]);
+          assertBodyKeys(body, ["displayName", "clientType"], ["displayName", "clientType"]);
           const state = await service.join(matchId, getBearer(req), body);
           sendJson(res, 200, state);
+          return;
+        }
+        if (operation === "ready" && req.method === "POST") {
+          const body = await readJson(req);
+          assertBodyKeys(body, ["ready"], ["ready"]);
+          if (typeof body.ready !== "boolean") {
+            throw Object.assign(new Error("ready must be a boolean"), { code: "INVALID_REQUEST", details: {} });
+          }
+          sendJson(res, 200, await service.setReady(matchId, getBearer(req), body.ready));
           return;
         }
         if (operation === "state" && req.method === "GET") {

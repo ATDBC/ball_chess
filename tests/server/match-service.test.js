@@ -12,18 +12,79 @@ async function fixture(t, options = {}, dependencies = {}) {
   const store = new MatchStore({ directory });
   const service = await MatchService.open({ store, ...dependencies });
   t.after(() => service.close());
-  const created = await service.create({ maxPlies: 40, ...options });
-  await service.join(created.matchId, created.playerTokens.left, { name: "L", clientKind: "test" });
-  await service.join(created.matchId, created.playerTokens.right, { name: "R", clientKind: "test" });
+  const response = await service.create({ config: { maxPlies: 40, ...options } });
+  const setup = await service.getSetup(response.matchId, response.adminToken);
+  const created = { ...response, playerTokens: setup.playerTokens };
+  await service.join(created.matchId, created.playerTokens.left, { displayName: "L", clientType: "test" });
+  await service.join(created.matchId, created.playerTokens.right, { displayName: "R", clientType: "test" });
+  await service.setReady(created.matchId, created.playerTokens.left, true);
+  await service.setReady(created.matchId, created.playerTokens.right, true);
   return { store, service, created };
 }
 
-test("two seats start at version 2 and stale retries do not apply twice", async (t) => {
-  const { service, created } = await fixture(t);
-  const accepted = await service.submitAction(created.matchId, created.playerTokens.left, 2, { type: "move", direction: "up" });
-  assert.equal(accepted.version, 3);
+async function emptyFixture(t, dependencies = {}) {
+  await mkdir(path.join(process.cwd(), ".tmp"), { recursive: true });
+  const directory = await mkdtemp(path.join(process.cwd(), ".tmp", "empty-matches-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new MatchStore({ directory });
+  const service = await MatchService.open({ store, ...dependencies });
+  t.after(() => service.close());
+  return { store, service };
+}
+
+test("creation returns only credentials explicitly claimed by the caller", async (t) => {
+  const { service } = await emptyFixture(t);
+  const unclaimed = await service.create({ config: { maxPlies: 40 } });
+  assert.equal(Object.hasOwn(unclaimed, "playerTokens"), false);
+  assert.equal(Object.hasOwn(unclaimed, "playerToken"), false);
+  assert.equal(unclaimed.state.seats.left.phase, "open");
+  assert.equal(unclaimed.state.version, 0);
+
+  const claimed = await service.create({
+    config: { maxPlies: 40 },
+    claim: {
+      seat: "left",
+      profile: { displayName: "Creator", clientType: "test" }
+    }
+  });
+  assert.equal(claimed.seat, "left");
+  assert.equal(typeof claimed.playerToken, "string");
+  assert.equal(Object.hasOwn(claimed, "playerTokens"), false);
+  assert.equal(claimed.state.seats.left.phase, "claimed");
+  assert.equal(claimed.state.version, 1);
+});
+
+test("service ready is idempotent, cancellable before start, and starts on the second seat", async (t) => {
+  const { service } = await emptyFixture(t, { now: () => 100 });
+  const created = await service.create({ config: { maxPlies: 40, turnTimeoutMs: 10 } });
+  const setup = await service.getSetup(created.matchId, created.adminToken);
+  const profile = { displayName: "Agent", clientType: "test" };
+  await service.join(created.matchId, setup.playerTokens.left, profile);
+  await service.join(created.matchId, setup.playerTokens.right, profile);
+
+  const leftReady = await service.setReady(created.matchId, setup.playerTokens.left, true);
+  assert.equal(leftReady.version, 3);
+  assert.equal(leftReady.status, "waiting");
+  assert.equal((await service.setReady(created.matchId, setup.playerTokens.left, true)).version, 3);
+  assert.equal((await service.setReady(created.matchId, setup.playerTokens.left, false)).version, 4);
+  assert.equal((await service.setReady(created.matchId, setup.playerTokens.left, true)).version, 5);
+
+  const started = await service.setReady(created.matchId, setup.playerTokens.right, true);
+  assert.equal(started.version, 6);
+  assert.equal(started.status, "playing");
+  assert.equal(started.turnDeadlineAt, 110);
   await assert.rejects(
-    service.submitAction(created.matchId, created.playerTokens.left, 2, { type: "move", direction: "up" }),
+    service.setReady(created.matchId, setup.playerTokens.left, false),
+    (error) => error.code === "MATCH_ALREADY_STARTED"
+  );
+});
+
+test("two ready seats start at version 4 and stale retries do not apply twice", async (t) => {
+  const { service, created } = await fixture(t);
+  const accepted = await service.submitAction(created.matchId, created.playerTokens.left, 4, { type: "move", direction: "up" });
+  assert.equal(accepted.version, 5);
+  await assert.rejects(
+    service.submitAction(created.matchId, created.playerTokens.left, 4, { type: "move", direction: "up" }),
     (error) => error.code === "STALE_STATE"
   );
   const state = await service.getState(created.matchId, created.playerTokens.left);
@@ -34,20 +95,20 @@ test("two seats start at version 2 and stale retries do not apply twice", async 
 test("concurrent copies of one version can only apply once", async (t) => {
   const { service, created } = await fixture(t);
   const attempts = await Promise.allSettled([
-    service.submitAction(created.matchId, created.playerTokens.left, 2, { type: "move", direction: "up" }),
-    service.submitAction(created.matchId, created.playerTokens.left, 2, { type: "move", direction: "left" })
+    service.submitAction(created.matchId, created.playerTokens.left, 4, { type: "move", direction: "up" }),
+    service.submitAction(created.matchId, created.playerTokens.left, 4, { type: "move", direction: "left" })
   ]);
   assert.equal(attempts.filter((attempt) => attempt.status === "fulfilled").length, 1);
   const rejected = attempts.find((attempt) => attempt.status === "rejected");
   assert.equal(rejected.reason.code, "STALE_STATE");
   const state = await service.getState(created.matchId);
-  assert.equal(state.version, 3);
+  assert.equal(state.version, 5);
   assert.equal(state.plies, 1);
 });
 
 test("restart rebuilds game from accepted actions and hides exported tokens", async (t) => {
   const { store, service, created } = await fixture(t);
-  await service.submitAction(created.matchId, created.playerTokens.left, 2, { type: "move", direction: "up" });
+  await service.submitAction(created.matchId, created.playerTokens.left, 4, { type: "move", direction: "up" });
   const restored = await MatchService.open({ store });
   const state = await restored.getState(created.matchId, created.playerTokens.left);
   assert.deepEqual(state.players.left.position, [2, 1]);
@@ -100,12 +161,12 @@ test("deadline wins when an action arrives exactly at the deadline", async (t) =
 
   now = 1_010;
   await assert.rejects(
-    service.submitAction(created.matchId, created.playerTokens.left, 2, { type: "move", direction: "up" }),
+    service.submitAction(created.matchId, created.playerTokens.left, 4, { type: "move", direction: "up" }),
     (error) => error.code === "TURN_EXPIRED"
   );
 
   const state = await service.getState(created.matchId);
-  assert.equal(state.version, 3);
+  assert.equal(state.version, 5);
   assert.equal(state.plies, 0);
   assert.deepEqual(state.result, { kind: "win", winner: "right", reason: "turn_timeout" });
 });
@@ -120,16 +181,16 @@ test("a broken update listener cannot turn a committed action into a failure", a
   const accepted = await service.submitAction(
     created.matchId,
     created.playerTokens.left,
-    2,
+    4,
     { type: "move", direction: "up" }
   );
-  assert.equal(accepted.version, 3);
+  assert.equal(accepted.version, 5);
   assert.equal(background.length, 1);
   assert.equal(background[0].context.operation, "publish_update");
 
   const restored = await MatchService.open({ store });
   t.after(() => restored.close());
-  assert.equal((await restored.getState(created.matchId)).version, 3);
+  assert.equal((await restored.getState(created.matchId)).version, 5);
 });
 
 test("a rejected asynchronous update listener is reported in the background", async (t) => {
@@ -142,12 +203,12 @@ test("a rejected asynchronous update listener is reported in the background", as
   const accepted = await service.submitAction(
     created.matchId,
     created.playerTokens.left,
-    2,
+    4,
     { type: "move", direction: "up" }
   );
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.equal(accepted.version, 3);
+  assert.equal(accepted.version, 5);
   assert.equal(background.length, 1);
   assert.equal(background[0].context.operation, "publish_update");
 });
@@ -160,10 +221,10 @@ test("a failed save changes neither memory nor notifications", async (t) => {
   store.save = async () => { throw new Error("disk full"); };
 
   await assert.rejects(
-    service.submitAction(created.matchId, created.playerTokens.left, 2, { type: "move", direction: "up" }),
+    service.submitAction(created.matchId, created.playerTokens.left, 4, { type: "move", direction: "up" }),
     (error) => error.code === "STORAGE_ERROR"
   );
-  assert.equal((await service.getState(created.matchId)).version, 2);
+  assert.equal((await service.getState(created.matchId)).version, 4);
   assert.equal(updates, 0);
 
   store.save = saved;
