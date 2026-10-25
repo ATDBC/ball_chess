@@ -57,17 +57,22 @@ test("pre-bound stdio MCP clients recover their seats after process replacement"
   const setup = await fetch(`${baseUrl}/api/matches/${created.matchId}/setup`, {
     headers: { authorization: `Bearer ${created.adminToken}` }
   }).then((response) => response.json());
+  const createInvitation = (seat) => fetch(`${baseUrl}/api/matches/${created.matchId}/invitations`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${created.adminToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ seat })
+  }).then((response) => response.json());
+  const leftInvitation = await createInvitation("left");
   const manual = await connectClient("test-manual", []);
   const manualTools = await manual.listTools();
   assert.deepEqual(manualTools.tools.map((tool) => tool.name), [
-    "join_match", "set_ready", "get_match_state", "wait_for_turn", "submit_action"
+    "join_by_invite", "set_ready", "get_match_state", "wait_for_turn", "submit_action"
   ]);
-  await manual.callTool({
-    name: "join_match",
-    arguments: { matchId: created.matchId, playerToken: setup.playerTokens.left }
-  });
+  const joined = await manual.callTool({ name: "join_by_invite", arguments: { code: leftInvitation.code } });
+  assert.ok(!joined.content[0].text.includes(leftInvitation.code));
+  assert.ok(!joined.content[0].text.includes(setup.playerTokens.left));
   const manualState = await manual.callTool({ name: "get_match_state", arguments: {} });
-  assert.equal(manualState.structuredContent.yourPlayer, "left");
+  assert.equal(manualState.structuredContent.state.yourPlayer, "left");
   await manual.close();
   const left = await connectAgent("test-left", created.matchId, setup.playerTokens.left);
   let right = await connectAgent("test-right", created.matchId, setup.playerTokens.right);
@@ -76,41 +81,47 @@ test("pre-bound stdio MCP clients recover their seats after process replacement"
   await left.callTool({ name: "set_ready", arguments: { ready: true } });
   await right.callTool({ name: "set_ready", arguments: { ready: true } });
   const waitingState = await right.callTool({ name: "get_match_state", arguments: {} });
-  assert.equal(waitingState.structuredContent.status, "playing");
-  assert.equal(waitingState.structuredContent.yourTurn, false);
-  const waiting = right.callTool({ name: "wait_for_turn", arguments: { timeoutSeconds: 3 } });
+  assert.equal(waitingState.structuredContent.state.status, "playing");
+  assert.equal(waitingState.structuredContent.state.yourTurn, false);
+  const waiting = right.callTool({ name: "wait_for_turn", arguments: {} });
+  const leftBefore = await left.callTool({ name: "get_match_state", arguments: {} });
   const played = await left.callTool({
     name: "submit_action",
-    arguments: { expectedVersion: 4, action: { type: "move", direction: "up" } }
+    arguments: { expectedVersion: leftBefore.structuredContent.state.version, action: { type: "move", direction: "up" } }
   });
   assert.equal(played.structuredContent.ok, true);
   const awakened = await waiting;
-  assert.equal(awakened.structuredContent.waiting, false);
+  assert.equal(awakened.structuredContent.kind, "turn");
   assert.equal(awakened.structuredContent.state.yourTurn, true);
   await right.close();
   right = await connectAgent("test-right-reconnected", created.matchId, setup.playerTokens.right);
   const viewed = await right.callTool({ name: "get_match_state", arguments: {} });
-  assert.equal(viewed.structuredContent.yourPlayer, "right");
-  assert.deepEqual(viewed.structuredContent.players.left.position, [2, 1]);
-  assert.ok(viewed.structuredContent.ascii.includes("L"));
+  assert.equal(viewed.structuredContent.state.yourPlayer, "right");
+  assert.deepEqual(viewed.structuredContent.state.players.left.position, [2, 1]);
+  assert.ok(viewed.structuredContent.state.ascii.includes("L"));
   const rejected = await right.callTool({
     name: "submit_action",
-    arguments: { expectedVersion: 4, action: { type: "move", direction: "up" } }
+    arguments: { expectedVersion: viewed.structuredContent.state.version - 1, action: { type: "move", direction: "up" } }
   });
   assert.equal(rejected.structuredContent.ok, false);
   assert.equal(rejected.structuredContent.state.plies, 1);
 
-  for (let expectedVersion = 5; expectedVersion <= 42; expectedVersion += 1) {
-    const agent = expectedVersion % 2 === 0 ? left : right;
-    const current = await agent.callTool({ name: "get_match_state", arguments: {} });
-    if (current.structuredContent.status === "finished") break;
-    assert.ok(current.structuredContent.legalActions.moves.includes("up"));
-    const action = { type: "move", direction: "up" };
-    const next = await agent.callTool({ name: "submit_action", arguments: { expectedVersion, action } });
+  for (let turn = 0; turn < 40; turn += 1) {
+    const leftState = await left.callTool({ name: "get_match_state", arguments: {} });
+    if (leftState.structuredContent.state.status === "finished") break;
+    const agent = leftState.structuredContent.state.yourTurn ? left : right;
+    const current = leftState.structuredContent.state.yourTurn
+      ? leftState
+      : await right.callTool({ name: "get_match_state", arguments: {} });
+    assert.ok(current.structuredContent.state.legalActions.moves.includes("up"));
+    const next = await agent.callTool({
+      name: "submit_action",
+      arguments: { expectedVersion: current.structuredContent.state.version, action: { type: "move", direction: "up" } }
+    });
     assert.equal(next.structuredContent.ok, true);
   }
   const final = await left.callTool({ name: "get_match_state", arguments: {} });
-  assert.equal(final.structuredContent.status, "finished");
-  assert.equal(final.structuredContent.plies, 23);
-  assert.deepEqual(final.structuredContent.result, { kind: "win", winner: "left", reason: "reached_goal" });
+  assert.equal(final.structuredContent.state.status, "finished");
+  assert.equal(final.structuredContent.state.plies, 23);
+  assert.deepEqual(final.structuredContent.state.result, { kind: "win", winner: "left", reason: "reached_goal" });
 });

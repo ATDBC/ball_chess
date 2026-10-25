@@ -30,17 +30,18 @@ test("ascii shows both seats and never contains credentials", () => {
   assert.ok(!text.includes("Token"));
 });
 
-test("tool surface includes explicit readiness", () => {
+test("tool surface joins by invitation without model-visible seat credentials", () => {
   assert.deepEqual(TOOL_DEFINITIONS.map((tool) => tool.name), [
-    "join_match", "set_ready", "get_match_state", "wait_for_turn", "submit_action"
+    "join_by_invite", "set_ready", "get_match_state", "wait_for_turn", "submit_action"
   ]);
+  const join = TOOL_DEFINITIONS.find((tool) => tool.name === "join_by_invite");
+  assert.deepEqual(join.inputSchema.required, ["code"]);
+  assert.equal(JSON.stringify(join.inputSchema).includes("playerToken"), false);
   const ready = TOOL_DEFINITIONS.find((tool) => tool.name === "set_ready");
   assert.deepEqual(ready.inputSchema.required, ["ready"]);
   assert.equal(ready.inputSchema.properties.ready.type, "boolean");
   const wait = TOOL_DEFINITIONS.find((tool) => tool.name === "wait_for_turn");
-  assert.deepEqual(wait.inputSchema.properties.timeoutSeconds.enum, [
-    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
-  ]);
+  assert.deepEqual(wait.inputSchema.properties, {});
 });
 
 test("submit_action schema discriminates moves from wall placements", () => {

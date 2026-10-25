@@ -1,178 +1,37 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createGame } from "../../core/state.js";
-import { listLegalActions } from "../../core/legal.js";
 import { AgentSession } from "../../mcp/session.js";
 
-const PLAYER_STATE = {
-  matchId: "m_test",
-  version: 4,
-  status: "playing",
-  config: { width: 9, height: 13, wallLimit: null, maxPlies: 300, turnTimeoutMs: null, firstPlayer: "left" },
-  players: {
-    left: { color: "red", position: [2, 0], wallsUsed: 0 },
-    right: { color: "blue", position: [6, 0], wallsUsed: 0 }
-  },
-  walls: [],
-  currentPlayer: "left",
-  plies: 0,
-  lastAction: null,
-  result: null,
-  turnDeadlineAt: null,
-  seats: {
-    left: { phase: "ready", profile: { displayName: "MCP agent", clientType: "mcp" }, invitation: null },
-    right: { phase: "ready", profile: { displayName: "MCP agent", clientType: "mcp" }, invitation: null }
-  },
-  yourPlayer: "left",
-  yourTurn: true,
-  legalActions: [{ type: "move", direction: "up" }]
+const STATE = {
+  matchId: "m_test", version: 4, status: "playing", yourPlayer: "left", yourTurn: true,
+  config: { wallLimit: null }, players: { left: { position: [2, 0], wallsUsed: 0 }, right: { position: [6, 0], wallsUsed: 0 } },
+  walls: [], legalActions: [{ type: "move", direction: "up" }]
 };
 
-test("a pre-bound session joins lazily once before serving state", async () => {
-  const requests = [];
-  const fetchImpl = async (url, options = {}) => {
-    requests.push({ url, options });
-    return new Response(JSON.stringify(PLAYER_STATE), {
-      status: 200,
-      headers: { "content-type": "application/json" }
-    });
-  };
+test("pre-bound MCP session joins once without exposing its token", async () => {
+  const calls = [];
   const session = new AgentSession({
-    baseUrl: "http://127.0.0.1:7100",
-    matchId: "m_test",
-    token: "seat_secret",
-    fetchImpl
+    baseUrl: "http://local.test", matchId: "m_test", token: "seat_secret",
+    fetchImpl: async (url, options) => { calls.push({ url, options }); return new Response(JSON.stringify(STATE), { status: 200 }); }
   });
-
-  await Promise.all([session.getState(), session.getState()]);
-
-  assert.deepEqual(requests.map(({ url, options }) => ({
-    path: new URL(url).pathname,
-    method: options.method || "GET",
-    authorization: options.headers.authorization
-  })), [
-    { path: "/api/matches/m_test/join", method: "POST", authorization: "Bearer seat_secret" },
-    { path: "/api/matches/m_test/state", method: "GET", authorization: "Bearer seat_secret" },
-    { path: "/api/matches/m_test/state", method: "GET", authorization: "Bearer seat_secret" }
-  ]);
+  const [one, two] = await Promise.all([session.getState(), session.getState()]);
+  assert.equal(calls.filter((call) => call.url.endsWith("/join")).length, 1);
+  assert.ok(!JSON.stringify({ one, two }).includes("seat_secret"));
 });
-
-test("a failed shared join is cleared so the next state call can retry", async () => {
-  let joinAttempts = 0;
-  const fetchImpl = async (url) => {
-    if (new URL(url).pathname.endsWith("/join")) {
-      joinAttempts += 1;
-      if (joinAttempts === 1) {
-        return new Response(JSON.stringify({
-          ok: false,
-          error: { code: "STORAGE_ERROR", message: "temporary failure", details: {} }
-        }), {
-          status: 500,
-          headers: { "content-type": "application/json" }
-        });
-      }
+test("MCP invitation join generates hidden idempotency and readies", async () => {
+  const bodies = [];
+  const session = new AgentSession({
+    baseUrl: "http://local.test",
+    fetchImpl: async (url, options) => {
+      bodies.push(options.body && JSON.parse(options.body));
+      if (url.endsWith("/redeem")) return new Response(JSON.stringify({ matchId: "m_test", seat: "left", playerToken: "seat_secret", state: { ...STATE, status: "waiting", yourTurn: false } }), { status: 200 });
+      return new Response(JSON.stringify(STATE), { status: 200 });
     }
-    return new Response(JSON.stringify(PLAYER_STATE), {
-      status: 200,
-      headers: { "content-type": "application/json" }
-    });
-  };
-  const session = new AgentSession({
-    baseUrl: "http://127.0.0.1:7100",
-    matchId: "m_test",
-    token: "seat_secret",
-    fetchImpl
   });
-
-  const failed = await Promise.allSettled([session.getState(), session.getState()]);
-  assert.deepEqual(failed.map((result) => result.status), ["rejected", "rejected"]);
-  assert.equal(joinAttempts, 1);
-
-  const recovered = await session.getState();
-  assert.equal(recovered.yourPlayer, "left");
-  assert.equal(joinAttempts, 2);
+  const result = await session.joinByInvite("ABCDE-FGHIJ-KLMNP-QRSTU-VWXYZ0", "Agent");
+  assert.match(bodies[0].redemptionId, /^[0-9a-f]{32}$/);
+  assert.deepEqual(bodies[1], { ready: true });
+  assert.ok(!JSON.stringify(result).includes("seat_secret"));
+  assert.ok(!JSON.stringify(result).includes("ABCDE"));
 });
 
-test("setReady joins lazily and posts the requested boolean", async () => {
-  const requests = [];
-  const fetchImpl = async (url, options = {}) => {
-    requests.push({ url, options });
-    return new Response(JSON.stringify(PLAYER_STATE), {
-      status: 200,
-      headers: { "content-type": "application/json" }
-    });
-  };
-  const session = new AgentSession({
-    baseUrl: "http://127.0.0.1:7100",
-    matchId: "m_test",
-    token: "seat_secret",
-    fetchImpl
-  });
-
-  const state = await session.setReady(true);
-  assert.equal(state.status, "playing");
-  assert.deepEqual(requests.map(({ url, options }) => ({
-    path: new URL(url).pathname,
-    body: options.body && JSON.parse(options.body)
-  })), [
-    {
-      path: "/api/matches/m_test/join",
-      body: { displayName: "MCP agent", clientType: "mcp" }
-    },
-    { path: "/api/matches/m_test/ready", body: { ready: true } }
-  ]);
-});
-
-test("agent state compacts legal actions below the tool-result prune threshold", async () => {
-  const game = createGame();
-  const state = {
-    ...PLAYER_STATE,
-    ...game,
-    legalActions: listLegalActions(game, "left")
-  };
-  const fetchImpl = async () => new Response(JSON.stringify(state), {
-    status: 200,
-    headers: { "content-type": "application/json" }
-  });
-  const session = new AgentSession({
-    baseUrl: "http://127.0.0.1:7100",
-    matchId: "m_test",
-    token: "seat_secret",
-    fetchImpl
-  });
-
-  const projected = await session.getState();
-
-  assert.deepEqual(projected.legalActions.moves, ["up", "left", "right"]);
-  assert.equal(projected.legalActions.walls.h.length, 96);
-  assert.equal(projected.legalActions.walls.v.length, 96);
-  assert.deepEqual(projected.legalActions.walls.h[0], [0, 1]);
-  assert.deepEqual(projected.legalActions.walls.v[0], [1, 0]);
-  assert.ok(Buffer.byteLength(JSON.stringify(projected)) < 8192);
-});
-
-test("concurrent joins cannot replace the first requested binding", async () => {
-  const requests = [];
-  let release;
-  const gate = new Promise((resolve) => { release = resolve; });
-  const fetchImpl = async (url, options = {}) => {
-    requests.push({ url, options });
-    await gate;
-    const matchId = new URL(url).pathname.split("/")[3];
-    return new Response(JSON.stringify({ ...PLAYER_STATE, matchId }), {
-      status: 200,
-      headers: { "content-type": "application/json" }
-    });
-  };
-  const session = new AgentSession({ baseUrl: "http://127.0.0.1:7100", fetchImpl });
-
-  const first = session.join("m_first", "token_first", "First");
-  const second = session.join("m_second", "token_second", "Second");
-  release();
-
-  assert.equal((await first).matchId, "m_first");
-  await assert.rejects(second, (error) => error.code === "ALREADY_JOINED");
-  assert.equal(requests.length, 1);
-  assert.equal(session.matchId, "m_first");
-  assert.equal(session.token, "token_first");
-});

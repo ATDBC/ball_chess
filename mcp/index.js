@@ -23,17 +23,17 @@ async function main() {
   const token = values.match ? process.env.BALL_CHESS_PLAYER_TOKEN : null;
   if (values.match && !token) throw new Error("BALL_CHESS_PLAYER_TOKEN is required with --match");
   const session = new AgentSession({ baseUrl: endpoint.href, matchId: values.match ?? null, token });
-  const tools = values.match ? TOOL_DEFINITIONS.filter((tool) => tool.name !== "join_match") : TOOL_DEFINITIONS;
+  const tools = values.match ? TOOL_DEFINITIONS.filter((tool) => tool.name !== "join_by_invite") : TOOL_DEFINITIONS;
   const toolNames = new Set(tools.map((tool) => tool.name));
   const server = new Server(
     { name: "ball-chess", version: "0.1.0" },
     { capabilities: { tools: {} } }
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
-  server.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
+  server.setRequestHandler(CallToolRequestSchema, async ({ params }, extra) => {
     try {
       if (!toolNames.has(params.name)) throw new Error(`Unknown tool: ${params.name}`);
-      return await handleTool(params.name, params.arguments || {}, session);
+      return await handleTool(params.name, params.arguments || {}, session, { signal: extra?.signal });
     } catch (error) {
       const result = { ok: false, error: { code: error.code || "MCP_ERROR", message: error.message } };
       return { isError: true, structuredContent: result, content: [{ type: "text", text: JSON.stringify(result) }] };

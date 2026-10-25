@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildAgentPrompt, buildMcpConfig } from "../../web/agent-instructions.js";
+import { buildAgentPrompt, buildInvitePrompt, buildMcpConfig } from "../../web/agent-instructions.js";
 
 test("agent setup contains only the requested seat credential", () => {
   const prompt = buildAgentPrompt({ matchId: "m_test", seat: "left" });
@@ -22,4 +22,10 @@ test("agent setup contains only the requested seat credential", () => {
   assert.deepEqual(config.mcpServers["ball-chess"].env, {
     BALL_CHESS_PLAYER_TOKEN: "left_secret"
   });
+});
+
+test("invitation prompt is the default agent handoff and contains no long-lived token", () => {
+  const prompt = buildInvitePrompt({ code: "ABCDE-FGHIJ-KLMNP-QRSTU-VWXYZ0" });
+  assert.equal(prompt, "加入邀请码 ABCDE-FGHIJ-KLMNP-QRSTU-VWXYZ0 并开始");
+  assert.ok(!prompt.includes("playerToken"));
 });

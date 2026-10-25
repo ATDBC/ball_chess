@@ -20,3 +20,6 @@ export function buildAgentPrompt({ matchId, seat }) {
     "Continue until result is not null; do not try to act for the other seat."
   ].join("\n");
 }
+export function buildInvitePrompt({ code }) {
+  return `加入邀请码 ${code} 并开始`;
+}
