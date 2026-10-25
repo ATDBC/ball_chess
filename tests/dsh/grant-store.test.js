@@ -118,6 +118,12 @@ test("finished records reject forged seats, outcomes, versions, and extra fields
   };
   assert.equal(decodeGrant(record).receipt.state.yourPlayer, "left");
 
+  const previousDecisionFormat = structuredClone(record);
+  delete previousDecisionFormat.payload.receipt.state.decision;
+  const upgraded = decodeGrant(previousDecisionFormat);
+  assert.equal(upgraded.receipt.state.decision.actor.you.seat, "left");
+  assert.match(upgraded.receipt.state.ascii, /0 1 2 3 4 5 6 7 8/);
+
   const legacyWall = structuredClone(record);
   delete legacyWall.payload.receipt.state.walls[0].player;
   assert.equal(decodeGrant(legacyWall).receipt.state.walls[0].player, undefined);

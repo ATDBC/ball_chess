@@ -88,20 +88,25 @@ test("two DSH sessions play independently, resume cold, cancel waits, isolate fo
   );
 
   const opening = await harness.tools.get("get_match_state").execute({}, leftExec);
-  await harness.tools.get("submit_action").execute({ expectedVersion: opening.state.version, action: { type: "move", direction: "up" } }, leftExec);
+  await harness.tools.get("submit_action").execute({ expectedVersion: opening.state.version, actionId: "wall:h:0:1" }, leftExec);
   assert.ok(credentials.records.has(credentialKeyForAgent("dsh-left")));
   harness.dispose();
   assert.ok(credentials.records.has(credentialKeyForAgent("dsh-left")));
   harness = pluginHarness(credentials, baseUrl);
   const resumed = await harness.tools.get("get_match_state").execute({}, rightExec);
-  assert.equal(resumed.state.players.left.position[1], 1);
+  assert.equal(resumed.state.players.left.position[1], 0);
+  assert.equal(resumed.state.walls[0].orientation, "h");
+  await harness.tools.get("submit_action").execute({
+    expectedVersion: resumed.state.version,
+    actionId: "wall:v:8:0"
+  }, rightExec);
 
   for (let turn = 0; turn < 40; turn += 1) {
     const left = await harness.tools.get("get_match_state").execute({}, leftExec);
     if (left.state.status === "finished") break;
     const currentExec = left.state.yourTurn ? leftExec : rightExec;
     const current = left.state.yourTurn ? left : await harness.tools.get("get_match_state").execute({}, rightExec);
-    const next = await harness.tools.get("submit_action").execute({ expectedVersion: current.state.version, action: { type: "move", direction: "up" } }, currentExec);
+    const next = await harness.tools.get("submit_action").execute({ expectedVersion: current.state.version, actionId: "move:up" }, currentExec);
     if (next.kind === "finished") break;
   }
   const finalLeft = await harness.tools.get("get_match_state").execute({}, leftExec).catch((error) => ({ error }));
@@ -113,6 +118,9 @@ test("two DSH sessions play independently, resume cold, cancel waits, isolate fo
     assert.equal(stored.payload.state, "finished");
     assert.equal(JSON.stringify(stored).includes("playerToken"), false);
   }
+  const record = await harness.tools.get("get_match_record").execute({}, leftExec);
+  assert.deepEqual(record.record.actions.slice(0, 2).map((entry) => entry.actionId), ["wall:h:0:1", "wall:v:8:0"]);
+  assert.deepEqual(record.record.result, { kind: "win", winner: "left", reason: "reached_goal" });
   harness.dispose();
   const offline = pluginHarness(credentials, baseUrl, async () => { throw new Error("network must not be used"); });
   const recoveredLeft = await offline.tools.get("get_match_state").execute({}, leftExec);

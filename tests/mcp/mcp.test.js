@@ -7,6 +7,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { MatchStore } from "../../server/store.js";
 import { MatchService } from "../../server/match-service.js";
 import { createApp } from "../../server/app.js";
+import { applyAction } from "../../core/engine.js";
+import { createGame } from "../../core/state.js";
 
 test("pre-bound stdio MCP clients recover their seats after process replacement", { timeout: 15000 }, async (t) => {
   await mkdir(path.join(process.cwd(), ".tmp"), { recursive: true });
@@ -66,7 +68,7 @@ test("pre-bound stdio MCP clients recover their seats after process replacement"
   const manual = await connectClient("test-manual", []);
   const manualTools = await manual.listTools();
   assert.deepEqual(manualTools.tools.map((tool) => tool.name), [
-    "join_by_invite", "set_ready", "get_match_state", "wait_for_turn", "submit_action"
+    "join_by_invite", "set_ready", "get_match_state", "get_match_record", "wait_for_turn", "submit_action"
   ]);
   const joined = await manual.callTool({ name: "join_by_invite", arguments: { code: leftInvitation.code } });
   assert.ok(!joined.content[0].text.includes(leftInvitation.code));
@@ -77,7 +79,9 @@ test("pre-bound stdio MCP clients recover their seats after process replacement"
   const left = await connectAgent("test-left", created.matchId, setup.playerTokens.left);
   let right = await connectAgent("test-right", created.matchId, setup.playerTokens.right);
   const listed = await left.listTools();
-  assert.deepEqual(listed.tools.map((tool) => tool.name), ["set_ready", "get_match_state", "wait_for_turn", "submit_action"]);
+  assert.deepEqual(listed.tools.map((tool) => tool.name), [
+    "set_ready", "get_match_state", "get_match_record", "wait_for_turn", "submit_action"
+  ]);
   await left.callTool({ name: "set_ready", arguments: { ready: true } });
   await right.callTool({ name: "set_ready", arguments: { ready: true } });
   const waitingState = await right.callTool({ name: "get_match_state", arguments: {} });
@@ -87,24 +91,35 @@ test("pre-bound stdio MCP clients recover their seats after process replacement"
   const leftBefore = await left.callTool({ name: "get_match_state", arguments: {} });
   const played = await left.callTool({
     name: "submit_action",
-    arguments: { expectedVersion: leftBefore.structuredContent.state.version, action: { type: "move", direction: "up" } }
+    arguments: { expectedVersion: leftBefore.structuredContent.state.version, actionId: "wall:h:0:1" }
   });
   assert.equal(played.structuredContent.ok, true);
   const awakened = await waiting;
   assert.equal(awakened.structuredContent.kind, "turn");
   assert.equal(awakened.structuredContent.state.yourTurn, true);
+  assert.ok(awakened.structuredContent.state.legalActionList.some((action) => (
+    action.type === "place_wall" && action.orientation === "v" && action.x === 8 && action.y === 0
+  )));
+  await right.callTool({
+    name: "submit_action",
+    arguments: { expectedVersion: awakened.structuredContent.state.version, actionId: "wall:v:8:0" }
+  });
   await right.close();
   right = await connectAgent("test-right-reconnected", created.matchId, setup.playerTokens.right);
   const viewed = await right.callTool({ name: "get_match_state", arguments: {} });
   assert.equal(viewed.structuredContent.state.yourPlayer, "right");
-  assert.deepEqual(viewed.structuredContent.state.players.left.position, [2, 1]);
+  assert.deepEqual(viewed.structuredContent.state.players.left.position, [2, 0]);
+  assert.deepEqual(viewed.structuredContent.state.walls.map(({ orientation, x, y }) => ({ orientation, x, y })), [
+    { orientation: "h", x: 0, y: 1 },
+    { orientation: "v", x: 8, y: 0 }
+  ]);
   assert.ok(viewed.structuredContent.state.ascii.includes("L"));
   const rejected = await right.callTool({
     name: "submit_action",
-    arguments: { expectedVersion: viewed.structuredContent.state.version - 1, action: { type: "move", direction: "up" } }
+    arguments: { expectedVersion: viewed.structuredContent.state.version - 1, actionId: "move:up" }
   });
   assert.equal(rejected.structuredContent.ok, false);
-  assert.equal(rejected.structuredContent.state.plies, 1);
+  assert.equal(rejected.structuredContent.state.plies, 2);
 
   for (let turn = 0; turn < 40; turn += 1) {
     const leftState = await left.callTool({ name: "get_match_state", arguments: {} });
@@ -116,12 +131,18 @@ test("pre-bound stdio MCP clients recover their seats after process replacement"
     assert.ok(current.structuredContent.state.legalActions.moves.includes("up"));
     const next = await agent.callTool({
       name: "submit_action",
-      arguments: { expectedVersion: current.structuredContent.state.version, action: { type: "move", direction: "up" } }
+      arguments: { expectedVersion: current.structuredContent.state.version, actionId: "move:up" }
     });
     assert.equal(next.structuredContent.ok, true);
   }
   const final = await left.callTool({ name: "get_match_state", arguments: {} });
   assert.equal(final.structuredContent.state.status, "finished");
-  assert.equal(final.structuredContent.state.plies, 23);
+  assert.equal(final.structuredContent.state.plies, 25);
   assert.deepEqual(final.structuredContent.state.result, { kind: "win", winner: "left", reason: "reached_goal" });
+  const recordResult = await left.callTool({ name: "get_match_record", arguments: {} });
+  const record = recordResult.structuredContent.record;
+  assert.deepEqual(record.actions.slice(0, 2).map((entry) => entry.actionId), ["wall:h:0:1", "wall:v:8:0"]);
+  let replay = createGame(record.config);
+  for (const entry of record.actions) replay = applyAction(replay, entry.player, entry.action);
+  assert.deepEqual(replay.result, record.result);
 });

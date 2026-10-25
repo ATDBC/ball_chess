@@ -99,14 +99,16 @@ function validEmptyLegalActions(value) {
     Array.isArray(value.wallRanges.v) && value.wallRanges.v.length === 0;
 }
 
-const TERMINAL_STATE_KEYS = [
+const TERMINAL_STATE_BASE_KEYS = [
   "matchId", "version", "status", "config", "players", "walls", "currentPlayer", "plies", "lastAction",
   "result", "turnDeadlineAt", "seats", "yourPlayer", "yourTurn", "legalActions", "ascii", "rules",
-  "wallBudgets", "legalActionList", "decision"
+  "wallBudgets", "legalActionList"
 ];
 
 function validTerminalState(state, matchId, seat) {
-  if (!exactKeys(state, TERMINAL_STATE_KEYS) || state.matchId !== matchId || state.status !== "finished" ||
+  const hasDecision = Object.hasOwn(state, "decision");
+  const expectedKeys = hasDecision ? [...TERMINAL_STATE_BASE_KEYS, "decision"] : TERMINAL_STATE_BASE_KEYS;
+  if (!exactKeys(state, expectedKeys) || state.matchId !== matchId || state.status !== "finished" ||
       !nonnegativeInteger(state.version) || state.yourPlayer !== seat || state.yourTurn !== false ||
       state.turnDeadlineAt !== null || !validConfig(state.config) || !playerId(state.currentPlayer) ||
       !nonnegativeInteger(state.plies) || state.plies > state.config.maxPlies ||
@@ -122,7 +124,7 @@ function validTerminalState(state, matchId, seat) {
   const budgetsValid = isDeepStrictEqual(state.wallBudgets, describeWallBudgets(state));
   const { decision, ...withoutDecision } = state;
   const projected = projectState({ ...withoutDecision, legalActions: state.legalActionList });
-  const decisionValid = isDeepStrictEqual(decision, projected.decision);
+  const decisionValid = !hasDecision || isDeepStrictEqual(decision, projected.decision);
   if (!rulesValid || !budgetsValid || !decisionValid) return false;
   if (state.lastAction !== null && state.lastAction.ply !== state.plies) return false;
   return true;
@@ -166,7 +168,14 @@ export function decodeGrant(record) {
         !exactKeys(payload.receipt, ["kind", "state"]) || payload.receipt.kind !== "finished" ||
         !validTerminalState(payload.receipt.state, payload.matchId, payload.seat)) fail();
     if (secret) fail(`: secret field ${secret}`);
-    return structuredClone(payload);
+    const decoded = structuredClone(payload);
+    if (!Object.hasOwn(decoded.receipt.state, "decision")) {
+      decoded.receipt.state = projectState({
+        ...decoded.receipt.state,
+        legalActions: decoded.receipt.state.legalActionList
+      });
+    }
+    return decoded;
   }
   fail();
 }

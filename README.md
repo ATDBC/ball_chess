@@ -97,7 +97,7 @@ node examples/bot.js --url http://127.0.0.1:7100 --match "$MATCH_ID" --token "$R
 }
 ```
 
-通用进程提供 `join_by_invite`、`set_ready`、`get_match_state`、`wait_for_turn` 和 `submit_action`。`join_by_invite` 在宿主内部生成幂等兑换 ID，认领后通过 `/ready` 自动准备；工具参数和结果都没有玩家 token。`wait_for_turn` 通过 SSE 跨心跳和临时断线持续等待，只在轮到自己、终局或调用取消时返回。
+通用进程提供 `join_by_invite`、`set_ready`、`get_match_state`、`get_match_record`、`wait_for_turn` 和 `submit_action`。`join_by_invite` 在宿主内部生成幂等兑换 ID，认领后通过 `/ready` 自动准备；工具参数和结果都没有玩家 token。`wait_for_turn` 通过 SSE 跨心跳和临时断线持续等待，只在轮到自己、终局或调用取消时返回。
 
 下面的预绑定形式仅用于测试、自动化和兼容恢复：
 
@@ -123,14 +123,17 @@ node examples/bot.js --url http://127.0.0.1:7100 --match "$MATCH_ID" --token "$R
 
 每个 agent 使用独立的 stdio 进程和独立席位令牌。配置不含管理员令牌，但包含所选席位令牌，因此必须按凭据保管。带 `--match` 启动时，适配器从 `BALL_CHESS_PLAYER_TOKEN` 取得令牌，在第一个状态、等待或行动调用前幂等加入；子进程重启后会以同一配置重新绑定。一个 MCP 进程只能绑定一个对局席位。
 
-预绑定进程隐藏 `join_by_invite`，向 Agent 提供四个工具：
+预绑定进程隐藏 `join_by_invite`，向 Agent 提供五个工具：
 
 - `set_ready`：占席后发送或取消 ready；双方都发送 `ready: true` 后开始。
-- `get_match_state`：获取 JSON 状态、ASCII 棋盘与合法行动。
+- `get_match_state`：获取 JSON 状态、带坐标 ASCII 棋盘和当前决策包。
+- `get_match_record`：按需获取本局配置、完整行动序列和结果；不会把整局棋谱重复放进每个回合状态。
 - `wait_for_turn`：通过 SSE 等待自己回合或终局；心跳和短暂重连不会制造一次新的模型轮次。
-- `submit_action`：携带最新 `expectedVersion` 提交一个 `legalActions` 中的行动；遇到 `STALE_STATE` 或 `ILLEGAL_ACTION` 时读取返回状态后重新选择。
+- `submit_action`：携带最新 `expectedVersion` 和从 `decision.legal` 原样复制的 `actionId`；遇到 `STALE_STATE` 或 `ILLEGAL_ACTION` 时读取返回状态后重新选择。
 
-MCP 与 DSH 直接复用 `agent/` 下同一个协议客户端。结构化状态在 `legalActionList` 中保留 HTTP 返回的完整行动数组，并通过 `legalActions.moves`、按 `h`/`v` 分组的墙锚点和可无损还原的墙范围提供兼容的紧凑视图。模型文本还包含本局规则、墙配额、双方墙使用情况、版本、截止时间和终局原因；有限墙与无限墙均从实际对局配置派生，不采用固定数量。
+MCP 与 DSH 直接复用 `agent/` 下同一个协议客户端。结构化状态在 `legalActionList` 中保留 HTTP 返回的完整行动数组，并通过 `legalActions.moves`、按 `h`/`v` 分组的墙锚点和可无损还原的墙范围提供兼容视图。`decision` 额外提供 `you/opponent` 视角别名、移动目标格、合法行动 ID、坐标轴以及横墙和竖墙实际阻断的两条格边；绝对坐标不会因席位旋转。行动 ID 为 `move:up|down|left|right` 或 `wall:h|v:<x>:<y>`，只用于模型工具层，HTTP 程序 bot 仍提交原结构化 action。模型文本还包含本局规则、墙配额、双方墙使用情况、版本、截止时间和终局原因；有限墙与无限墙均从实际对局配置派生，不采用固定数量。
+
+该决策包只降低读取和提交歧义，不提供最短路径、局面评分、胜率、搜索树或推荐行动。完整棋谱中的每一步同时保存结构化 action 和相同的规范化 `actionId`，可从本局配置确定性重放。
 
 平台不会自动启动 Kimi、Claude、Codex 或其他第三方 agent，也不保存模型 API 密钥。自动测试验证了标准 MCP 与两个独立 stdio 测试客户端，不声称已逐一验证所有第三方厂商。
 
