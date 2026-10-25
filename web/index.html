@@ -7,29 +7,28 @@
   <title>Ball Chess · 放墙竞速</title>
   <link rel="stylesheet" href="/web/styles.css">
 </head>
-<body>
+<body data-stage="outside">
   <main class="app-shell">
     <header class="app-header">
       <div>
         <p class="eyebrow">BALL / CHESS</p>
         <h1>向前一步，或改变路径。</h1>
-        <p class="subtitle">9 × 13 双人放墙竞速 · 本地对局 · Agent 就绪</p>
+        <p class="subtitle">9 × 13 双人放墙竞速 · 人类与 Agent 使用同一准备流程</p>
       </div>
       <div class="header-badge"><span class="pulse" aria-hidden="true"></span>LOCAL MATCH</div>
     </header>
 
     <section class="match-strip" aria-label="当前对局">
-      <div><span class="label">MATCH</span><output id="match-id">尚未创建</output></div>
-      <p id="status" aria-live="polite">创建或加入一局，开始对弈。</p>
+      <div><span class="label">MATCH</span><output id="match-id">尚未加入</output></div>
+      <p id="status" aria-live="polite">创建、输入邀请码，或观战一局。</p>
       <p id="countdown">回合不限时</p>
-      <button id="ready-toggle" type="button" class="primary" hidden>准备</button>
     </section>
 
     <div class="game-layout">
       <section class="board-panel" aria-label="游戏棋盘与行动">
         <div class="player-row" aria-label="双方状态">
-          <div class="player-chip" id="left-status"><span class="player-dot red" aria-hidden="true"></span><span>左侧 · 红球</span><strong id="left-walls">∞</strong></div>
-          <div class="player-chip" id="right-status"><span class="player-dot blue" aria-hidden="true"></span><span>右侧 · 蓝球</span><strong id="right-walls">∞</strong></div>
+          <div class="player-chip" id="left-status"><span class="player-dot red" aria-hidden="true"></span><span>左侧 · 红球</span><small id="left-phase">等待加入</small><strong id="left-walls">∞</strong></div>
+          <div class="player-chip" id="right-status"><span class="player-dot blue" aria-hidden="true"></span><span>右侧 · 蓝球</span><small id="right-phase">等待加入</small><strong id="right-walls">∞</strong></div>
         </div>
         <div id="board" class="board"></div>
         <div class="action-toolbar" aria-label="行动方式">
@@ -38,81 +37,88 @@
             <button id="mode-wall" type="button" disabled>放置挡板</button>
           </div>
           <label class="orientation-label" for="wall-orientation">方向
-            <select id="wall-orientation">
-              <option value="h">横向</option>
-              <option value="v">竖向</option>
-            </select>
+            <select id="wall-orientation"><option value="h">横向</option><option value="v">竖向</option></select>
           </label>
         </div>
-        <p class="board-hint">先到顶边任意格即获胜。墙覆盖两条格边，不可重叠或十字交叉。</p>
+        <p class="board-hint">方向键选择行动，M 切换移动/放墙，R 旋转墙，Enter 确认，Escape 取消预览。</p>
         <div id="result" class="result" role="status"></div>
         <div id="error" class="error" role="alert"></div>
       </section>
 
       <aside id="sidebar" class="sidebar">
-        <section class="panel-section">
-          <div class="section-heading"><span>01</span><h2>新建对局</h2></div>
+        <section class="panel-section" data-stage-panel="outside">
+          <div class="section-heading"><span>01</span><h2>开始一局</h2></div>
           <form id="create-form">
-            <label>我的席位
-              <select id="seat">
-                <option value="left">左侧 · 红球</option>
-                <option value="right">右侧 · 蓝球</option>
-                <option value="spectate">仅观战</option>
-              </select>
-            </label>
+            <label>显示名称<input id="create-name" autocomplete="nickname" maxlength="40" value="浏览器玩家" required></label>
+            <label>我的席位<select id="seat"><option value="left">左侧 · 红球</option><option value="right">右侧 · 蓝球</option><option value="spectate">仅管理/观战</option></select></label>
             <div class="field-pair">
-              <label>墙体规则
-                <select id="wall-mode">
-                  <option value="unlimited">无限墙</option>
-                  <option value="finite">有限墙</option>
-                </select>
-              </label>
-              <label>每方数量
-                <input id="wall-limit" type="number" min="0" step="1" value="10" disabled>
-              </label>
+              <label>墙体规则<select id="wall-mode"><option value="unlimited">无限墙</option><option value="finite">有限墙</option></select></label>
+              <label>每方数量<input id="wall-limit" type="number" min="0" step="1" value="10" disabled></label>
             </div>
             <div class="field-pair">
-              <label>最大行动数
-                <input id="max-plies" type="number" min="1" step="1" value="300" required>
-              </label>
-              <label>回合超时（秒）
-                <input id="turn-timeout" type="number" min="1" step="1" placeholder="不限时">
-              </label>
+              <label>最大行动数<input id="max-plies" type="number" min="1" step="1" value="300" required></label>
+              <label>回合超时（秒）<input id="turn-timeout" type="number" min="1" step="1" placeholder="不限时"></label>
             </div>
-            <label>先手
-              <select id="first-player">
-                <option value="left">左侧先手</option>
-                <option value="right">右侧先手</option>
-                <option value="random">随机先手</option>
-              </select>
-            </label>
+            <label>先手<select id="first-player"><option value="left">左侧先手</option><option value="right">右侧先手</option><option value="random">随机先手</option></select></label>
             <button class="primary" type="submit">创建本地对局</button>
           </form>
-        </section>
-
-        <section class="panel-section">
-          <div class="section-heading"><span>02</span><h2>加入或观战</h2></div>
-          <form id="join-form">
-            <label>对局 ID<input id="join-id" autocomplete="off" placeholder="m_…" required></label>
-            <label>席位令牌（留空则观战）<input id="join-token" type="password" autocomplete="off" placeholder="仅粘贴你的玩家令牌"></label>
-            <button type="submit">加入对局</button>
+          <div class="section-divider"><span>或</span></div>
+          <form id="invite-form">
+            <label>邀请码<input id="invite-code" autocomplete="one-time-code" placeholder="ABCDE-FGHIJ-…" required></label>
+            <label>显示名称<input id="invite-name" autocomplete="nickname" maxlength="40" value="浏览器玩家" required></label>
+            <button class="primary" type="submit">加入并进入准备</button>
           </form>
+          <div class="section-divider"><span>或</span></div>
+          <form id="spectate-form">
+            <label>对局 ID<input id="spectate-id" autocomplete="off" placeholder="m_…" required></label>
+            <button type="submit">仅观战</button>
+          </form>
+          <details id="compatibility-join" class="advanced">
+            <summary>高级兼容接入</summary>
+            <form id="join-form">
+              <label>对局 ID<input id="join-id" autocomplete="off" placeholder="m_…" required></label>
+              <label>席位令牌<input id="join-token" type="password" autocomplete="off" required></label>
+              <button type="submit">使用席位令牌加入</button>
+            </form>
+          </details>
         </section>
 
-        <section class="panel-section compact-section">
-          <div class="section-heading"><span>03</span><h2>棋谱与接入</h2></div>
-          <div id="action-log" class="action-log">尚未行动</div>
-          <div id="agent-setup" hidden>
-            <label>Agent 席位
-              <select id="agent-seat"><option value="left">左侧 Agent</option><option value="right">右侧 Agent</option></select>
-            </label>
-            <pre id="mcp-config" class="code-block"></pre>
-            <button id="copy-mcp" type="button">复制 MCP 配置</button>
-            <pre id="agent-prompt" class="code-block prompt-block"></pre>
-            <button id="copy-prompt" type="button">复制席位提示词</button>
-            <button id="abort-match" type="button" class="danger">中止此对局</button>
+        <section class="panel-section" data-stage-panel="waiting" hidden>
+          <div class="section-heading"><span>02</span><h2>等待双方准备</h2></div>
+          <p id="identity-summary" class="supporting-copy"></p>
+          <button id="ready-toggle" type="button" class="primary" hidden>准备</button>
+          <div id="admin-invitations" hidden>
+            <p class="supporting-copy">为空席生成一次性邀请码。重新生成会立即替换旧码。</p>
+            <div class="field-pair"><button id="invite-left" type="button">邀请左侧</button><button id="invite-right" type="button">邀请右侧</button></div>
+            <div id="invitation-result" class="invitation-result" hidden>
+              <code id="invitation-code"></code>
+              <button id="copy-invitation" type="button">复制“加入邀请码…”</button>
+            </div>
           </div>
+          <button id="leave-match" type="button">返回开始页</button>
+          <button id="abort-match" type="button" class="danger" hidden>中止此对局</button>
         </section>
+
+        <section class="panel-section compact-section" data-stage-panel="playing" hidden>
+          <div class="section-heading"><span>03</span><h2>正在对局</h2></div>
+          <p class="supporting-copy">服务端验证每一步。若版本已变化，页面会刷新后请你重新选择。</p>
+          <div id="action-log" class="action-log">尚未行动</div>
+        </section>
+
+        <section class="panel-section" data-stage-panel="finished" hidden>
+          <div class="section-heading"><span>04</span><h2>对局结束</h2></div>
+          <div id="finished-record" class="action-log">正在读取完整棋谱…</div>
+          <button id="new-match" type="button" class="primary">创建新对局</button>
+        </section>
+
+        <details id="agent-setup" class="panel-section advanced" hidden>
+          <summary>高级 Agent 接入</summary>
+          <label>Agent 席位<select id="agent-seat"><option value="left">左侧 Agent</option><option value="right">右侧 Agent</option></select></label>
+          <pre id="mcp-config" class="code-block"></pre>
+          <button id="copy-mcp" type="button">复制 MCP 配置</button>
+          <pre id="agent-prompt" class="code-block prompt-block"></pre>
+          <button id="copy-prompt" type="button">复制席位提示词</button>
+        </details>
       </aside>
     </div>
   </main>

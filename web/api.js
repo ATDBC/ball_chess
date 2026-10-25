@@ -20,9 +20,10 @@ export class MatchApi {
     return `/api/matches/${encodeURIComponent(matchId)}${suffix}`;
   }
 
-  async request(path, { token, method = "GET", body } = {}) {
+  async request(path, { token, method = "GET", body, signal } = {}) {
     const response = await this.fetch(`${this.baseUrl}${path}`, {
       method,
+      signal,
       headers: {
         ...(token ? { authorization: `Bearer ${token}` } : {}),
         ...(body !== undefined ? { "content-type": "application/json" } : {})
@@ -53,6 +54,17 @@ export class MatchApi {
     return this.request(this.path(id, "/ready"), { method: "POST", token, body: { ready } });
   }
 
+  createInvitation(id, adminToken, seat) {
+    return this.request(this.path(id, "/invitations"), { method: "POST", token: adminToken, body: { seat } });
+  }
+
+  redeemInvitation({ inviteCode, redemptionId, profile }) {
+    return this.request("/api/invitations/redeem", {
+      method: "POST",
+      body: { code: inviteCode, redemptionId, profile }
+    });
+  }
+
   state(id, token) {
     return this.request(this.path(id, "/state"), { token });
   }
@@ -67,6 +79,10 @@ export class MatchApi {
 
   abort(id, adminToken) {
     return this.request(this.path(id, "/abort"), { method: "POST", token: adminToken });
+  }
+
+  record(id) {
+    return this.request(this.path(id, "/record"));
   }
 
   events(id) {

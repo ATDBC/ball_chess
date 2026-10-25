@@ -60,3 +60,28 @@ test("wall previews use geometry and noninteractive boards register no handlers"
   assert.equal(preview.attributes.width, "48");
   assert.equal(preview.attributes.height, "4.5");
 });
+
+test("interactive board has one focus target and keyboard selects an action", () => {
+  const container = fixture();
+  const actions = [];
+  renderBoard(container, createGame(), {
+    legalActions: [
+      { type: "move", direction: "up" },
+      { type: "move", direction: "left" }
+    ],
+    mode: "move",
+    orientation: "h",
+    interactive: true,
+    onAction: (action) => actions.push(action)
+  });
+  const focusable = findAll(container, (element) => element.attributes.tabindex === "0");
+  assert.equal(focusable.length, 1);
+  assert.equal(focusable[0].tagName, "svg");
+  assert.notEqual(focusable[0].attributes.role, "img");
+  let prevented = false;
+  focusable[0].emit("keydown", { key: "Enter", preventDefault: () => { prevented = true; } });
+  assert.equal(prevented, true);
+  assert.deepEqual(actions, [{ type: "move", direction: "up" }]);
+  const actionTargets = findAll(container, (element) => element.attributes["data-action"]);
+  assert.equal(actionTargets.every((element) => element.attributes.tabindex === undefined), true);
+});

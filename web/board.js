@@ -22,18 +22,10 @@ function actionTarget(document, action, label, interactive, onAction) {
   const group = node(document, "g", {
     "data-action": JSON.stringify(action),
     class: "board-action",
-    role: "button",
-    tabindex: interactive ? 0 : -1,
     "aria-label": label
   });
   if (interactive) {
     group.addEventListener("click", () => onAction(action));
-    group.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault?.();
-        onAction(action);
-      }
-    });
   }
   return group;
 }
@@ -44,14 +36,52 @@ export function renderBoard(container, state, options = {}) {
     mode = "move",
     orientation = "h",
     interactive = false,
-    onAction = () => {}
+    onAction = () => {},
+    onModeChange = () => {},
+    onOrientationChange = () => {},
+    onCancel = () => {}
   } = options;
   const document = container.ownerDocument;
   const svg = node(document, "svg", {
     viewBox: "0 0 320 420",
-    role: "img",
-    "aria-label": "9 乘 13 Ball Chess 棋盘，左侧红球与右侧蓝球从底边向顶边竞速"
+    role: "application",
+    tabindex: interactive ? 0 : -1,
+    "aria-label": "9 乘 13 Ball Chess 棋盘。方向键选择行动，回车确认，M 切换行动，R 旋转墙，Escape 取消。"
   });
+  const visibleActions = legalActions.filter((action) => (
+    (mode === "move" && action.type === "move") ||
+    (mode === "wall" && action.type === "place_wall" && action.orientation === orientation)
+  ));
+  let selectedIndex = 0;
+  const selectAction = (step) => {
+    if (!visibleActions.length) return;
+    selectedIndex = (selectedIndex + step + visibleActions.length) % visibleActions.length;
+    for (const target of previews.children) {
+      const selected = target.attributes["data-action"] === JSON.stringify(visibleActions[selectedIndex]);
+      target.setAttribute("data-selected", String(selected));
+    }
+  };
+  if (interactive) {
+    svg.addEventListener("keydown", (event) => {
+      if (["ArrowUp", "ArrowRight", "ArrowDown", "ArrowLeft"].includes(event.key)) {
+        event.preventDefault?.();
+        selectAction(["ArrowUp", "ArrowRight"].includes(event.key) ? 1 : -1);
+      } else if (event.key === "Enter" || event.key === " ") {
+        if (!visibleActions.length) return;
+        event.preventDefault?.();
+        onAction(visibleActions[selectedIndex]);
+      } else if (event.key.toLowerCase?.() === "m") {
+        event.preventDefault?.();
+        onModeChange(mode === "move" ? "wall" : "move");
+      } else if (event.key.toLowerCase?.() === "r") {
+        event.preventDefault?.();
+        onOrientationChange(orientation === "h" ? "v" : "h");
+      } else if (event.key === "Escape") {
+        event.preventDefault?.();
+        onCancel();
+      }
+    });
+  }
 
   const defs = node(document, "defs");
   const red = node(document, "radialGradient", { id: "ball-red", cx: "32%", cy: "26%", r: "78%" });
@@ -119,6 +149,7 @@ export function renderBoard(container, state, options = {}) {
       const destination = destinationFor(state.players[state.yourPlayer || state.currentPlayer].position, action.direction);
       const center = cellCenter(destination);
       const target = actionTarget(document, action, `向${action.direction}移动`, interactive, onAction);
+      target.setAttribute("data-selected", String(action === visibleActions[selectedIndex]));
       target.append(
         node(document, "circle", { cx: center.x, cy: center.y, r: CELL_SIZE / 2, fill: "transparent" }),
         node(document, "circle", { cx: center.x, cy: center.y, r: 3, class: "move-preview" })
@@ -128,6 +159,7 @@ export function renderBoard(container, state, options = {}) {
     if (mode === "wall" && action.type === "place_wall" && action.orientation === orientation) {
       const { top } = wallFaces(action);
       const target = actionTarget(document, action, `放置${orientation === "h" ? "横" : "竖"}墙 ${action.x},${action.y}`, interactive, onAction);
+      target.setAttribute("data-selected", String(action === visibleActions[selectedIndex]));
       target.append(rect(document, top, { class: "wall-preview" }));
       const hit = orientation === "h"
         ? { x: top.x, y: top.y + top.height / 2 - CELL_SIZE / 4, width: top.width, height: CELL_SIZE / 2 }

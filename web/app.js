@@ -1,90 +1,21 @@
 import { MatchApi } from "./api.js";
+import { acceptSnapshot, activateIdentity, createAppState, createRefreshCoordinator, stageFor } from "./app-state.js";
 import { renderBoard } from "./board.js";
-import { buildAgentPrompt, buildMcpConfig } from "./agent-instructions.js";
-import {
-  canInteract,
-  nextReadyValue,
-  resolveInteractionMode,
-  seatPhaseText,
-  shouldAcceptSnapshot,
-  wallsRemaining
-} from "./state-view.js";
+import { canInteract, nextReadyValue, resolveInteractionMode, seatPhaseText, wallsRemaining } from "./state-view.js";
 
 const api = new MatchApi({ baseUrl: "", eventSourceFactory: (url) => new EventSource(url) });
 const byId = (id) => document.getElementById(id);
-const boardElement = byId("board");
-const statusElement = byId("status");
-const sidebarElement = byId("sidebar");
-const actionLogElement = byId("action-log");
-const resultElement = byId("result");
-const errorElement = byId("error");
-const STORAGE_KEY = "ballChess.activeMatch";
-
-let activeMatchId = null;
-let activePlayerToken = null;
-let activeAdminToken = null;
-let activeSeat = "spectate";
-let currentSetup = null;
-let currentState = null;
-let interactionMode = "move";
-let wallOrientation = "h";
-let actionPending = false;
-let readyPending = false;
-let eventSource = null;
-let connectionState = "live";
-let refreshFailed = false;
-let actionEntries = new Map();
-let expiredRefresh = null;
-
+const STORAGE_KEY = "ballChess.activeMatch.v2";
 const SEAT_NAMES = { left: "左侧红球", right: "右侧蓝球" };
 const DIRECTION_NAMES = { up: "上", down: "下", left: "左", right: "右" };
 
-function showError(message) {
-  errorElement.textContent = message;
-}
+let appState = createAppState();
+let eventSource = null;
+let invitationText = "";
+let pendingRedemption = null;
 
-function saveSession() {
-  if (!activeMatchId) return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      matchId: activeMatchId,
-      adminToken: activeAdminToken,
-      seat: activeSeat,
-      ...(activeAdminToken ? {} : { playerToken: activePlayerToken })
-    }));
-  } catch {
-    // The match remains usable when browser storage is unavailable.
-  }
-}
-
-function closeEvents() {
-  if (!eventSource) return;
-  eventSource.onmessage = null;
-  eventSource.onerror = null;
-  eventSource.onopen = null;
-  eventSource.close();
-  eventSource = null;
-}
-
-function formatAction(entry) {
-  const action = entry.action;
-  const detail = action.type === "move"
-    ? `向${DIRECTION_NAMES[action.direction]}移动`
-    : `放${action.orientation === "h" ? "横" : "竖"}墙 (${action.x}, ${action.y})`;
-  return `#${entry.ply} · ${SEAT_NAMES[entry.player]} · ${detail}`;
-}
-
-function renderActionLog() {
-  const entries = [...actionEntries.values()].sort((a, b) => b.ply - a.ply).slice(0, 8);
-  if (!entries.length) {
-    actionLogElement.textContent = "尚未行动";
-    return;
-  }
-  actionLogElement.replaceChildren(...entries.map((entry) => {
-    const line = document.createElement("p");
-    line.textContent = formatAction(entry);
-    return line;
-  }));
+function showError(message = "") {
+  byId("error").textContent = message;
 }
 
 function resultText(result) {
@@ -97,292 +28,334 @@ function resultText(result) {
   return `${result.kind}: ${result.reason}`;
 }
 
-function renderStatus(state) {
-  const connection = connectionState === "reconnecting" ? " · 正在重连" : "";
-  if (state.status === "waiting") {
-    const phases = [state.seats.left.phase, state.seats.right.phase];
-    const joined = phases.filter((phase) => phase !== "open").length;
-    const ready = phases.filter((phase) => phase === "ready").length;
-    statusElement.textContent = `等待双方准备 · 已加入 ${joined}/2 · 已准备 ${ready}/2${connection}`;
-  } else if (state.status === "finished") {
-    statusElement.textContent = `对局结束 · 共 ${state.plies} 手${connection}`;
-  } else {
-    const turn = state.yourTurn ? "轮到你行动" : `等待${SEAT_NAMES[state.currentPlayer]}`;
-    statusElement.textContent = `${turn} · ${state.plies}/${state.config.maxPlies} 手${connection}`;
+function formatAction(entry) {
+  const action = entry.action;
+  const detail = action.type === "move"
+    ? `向${DIRECTION_NAMES[action.direction]}移动`
+    : `放${action.orientation === "h" ? "横" : "竖"}墙 (${action.x}, ${action.y})`;
+  return `#${entry.ply} · ${SEAT_NAMES[entry.player]} · ${detail}`;
+}
+
+function persistIdentity() {
+  const { matchId, role, seat, adminToken, playerToken } = appState.identity;
+  if (!matchId) {
+    localStorage.removeItem(STORAGE_KEY);
+    return;
   }
-  resultElement.textContent = resultText(state.result);
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ matchId, role, seat, adminToken, playerToken }));
+  } catch {
+    // A blocked storage area does not prevent the current page from playing.
+  }
 }
 
-function renderSidebar(state) {
-  sidebarElement.dataset.status = state.status;
-  byId("left-walls").textContent = wallsRemaining(state, "left");
-  byId("right-walls").textContent = wallsRemaining(state, "right");
-  byId("left-status").classList.toggle("active", state.status === "playing" && state.currentPlayer === "left");
-  byId("right-status").classList.toggle("active", state.status === "playing" && state.currentPlayer === "right");
-  byId("left-status").title = `左侧${seatPhaseText(state.seats.left.phase)}`;
-  byId("right-status").title = `右侧${seatPhaseText(state.seats.right.phase)}`;
-  renderActionLog();
+function closeEvents() {
+  if (!eventSource) return;
+  eventSource.onmessage = null;
+  eventSource.onerror = null;
+  eventSource.onopen = null;
+  eventSource.close();
+  eventSource = null;
 }
 
-function renderAgentSetup() {
-  const section = byId("agent-setup");
-  section.hidden = !currentSetup;
-  if (!currentSetup) return;
-  const seat = byId("agent-seat").value;
-  byId("mcp-config").textContent = JSON.stringify(buildMcpConfig(currentSetup.mcp, {
-    matchId: activeMatchId,
-    playerToken: currentSetup.playerTokens[seat]
-  }), null, 2);
-  byId("agent-prompt").textContent = buildAgentPrompt({
-    matchId: activeMatchId,
-    seat
-  });
-  byId("abort-match").disabled = Boolean(currentState?.result);
+function renderRecord() {
+  const element = byId("finished-record");
+  if (!appState.record) {
+    element.textContent = "正在读取完整棋谱…";
+    return;
+  }
+  if (!appState.record.actions.length) {
+    element.textContent = "本局没有行动。";
+    return;
+  }
+  element.replaceChildren(...appState.record.actions.map((entry) => {
+    const line = document.createElement("p");
+    line.textContent = formatAction(entry);
+    return line;
+  }));
 }
 
-function renderControls(state) {
-  const interactive = Boolean(state && canInteract(state) && !actionPending);
-  const actions = state?.legalActions || [];
-  const hasMove = actions.some((action) => action.type === "move");
-  const hasWall = actions.some((action) => action.type === "place_wall");
-  interactionMode = resolveInteractionMode(state, interactionMode, actionPending);
-  byId("mode-move").disabled = !interactive || !hasMove;
-  byId("mode-wall").disabled = !interactive || !hasWall;
-  byId("wall-orientation").disabled = !interactive || !hasWall;
-  byId("mode-move").classList.toggle("active", interactionMode === "move");
-  byId("mode-wall").classList.toggle("active", interactionMode === "wall");
-  byId("mode-move").setAttribute("aria-pressed", String(interactionMode === "move"));
-  byId("mode-wall").setAttribute("aria-pressed", String(interactionMode === "wall"));
-  const readyValue = nextReadyValue(state);
-  const readyButton = byId("ready-toggle");
-  readyButton.hidden = readyValue === null;
-  readyButton.disabled = readyValue === null || readyPending;
-  readyButton.textContent = readyValue === false ? "取消准备" : "准备";
+function renderStatus(snapshot) {
+  const reconnecting = appState.connection === "reconnecting" ? " · 正在重连" : "";
+  if (!snapshot) {
+    byId("status").textContent = appState.identity.matchId ? "正在读取对局…" : "创建、输入邀请码，或观战一局。";
+    return;
+  }
+  if (snapshot.status === "waiting") {
+    const phases = [snapshot.seats.left.phase, snapshot.seats.right.phase];
+    byId("status").textContent = `等待双方准备 · 已加入 ${phases.filter((phase) => phase !== "open").length}/2 · 已准备 ${phases.filter((phase) => phase === "ready").length}/2${reconnecting}`;
+  } else if (snapshot.status === "finished") {
+    byId("status").textContent = `对局结束 · 共 ${snapshot.plies} 手${reconnecting}`;
+  } else {
+    const turn = snapshot.yourTurn ? "轮到你行动" : `等待${SEAT_NAMES[snapshot.currentPlayer]}`;
+    byId("status").textContent = `${turn} · ${snapshot.plies}/${snapshot.config.maxPlies} 手${reconnecting}`;
+  }
 }
 
 function renderAll() {
-  if (!currentState) {
-    renderControls(null);
+  const snapshot = appState.snapshot;
+  const stage = stageFor(appState);
+  document.body.dataset.stage = stage;
+  for (const panel of document.querySelectorAll("[data-stage-panel]")) {
+    panel.hidden = panel.dataset.stagePanel !== stage;
+  }
+  byId("match-id").textContent = appState.identity.matchId || "尚未加入";
+  renderStatus(snapshot);
+  byId("result").textContent = resultText(snapshot?.result);
+  byId("identity-summary").textContent = appState.identity.role === "player"
+    ? `你控制${SEAT_NAMES[appState.identity.seat] || "一个席位"}。双方准备后自动开始。`
+    : appState.identity.role === "admin" ? "你正在管理并观战此对局。" : "你正在观战。";
+
+  if (!snapshot) {
+    byId("ready-toggle").hidden = true;
     return;
   }
-  renderStatus(currentState);
-  renderSidebar(currentState);
-  renderControls(currentState);
-  renderAgentSetup();
-  renderBoard(boardElement, currentState, {
-    legalActions: currentState.legalActions || [],
-    mode: interactionMode,
-    orientation: wallOrientation,
-    interactive: canInteract(currentState) && !actionPending,
-    onAction: submitBoardAction
+  for (const seat of ["left", "right"]) {
+    byId(`${seat}-phase`).textContent = seatPhaseText(snapshot.seats[seat].phase);
+    byId(`${seat}-walls`).textContent = wallsRemaining(snapshot, seat);
+    byId(`${seat}-status`).classList.toggle("active", snapshot.status === "playing" && snapshot.currentPlayer === seat);
+  }
+
+  const ready = nextReadyValue(snapshot);
+  byId("ready-toggle").hidden = ready === null;
+  byId("ready-toggle").disabled = appState.pending === "ready";
+  byId("ready-toggle").textContent = ready === false ? "取消准备" : "准备";
+  byId("admin-invitations").hidden = !appState.identity.adminToken;
+  byId("abort-match").hidden = !appState.identity.adminToken;
+  for (const seat of ["left", "right"]) {
+    byId(`invite-${seat}`).disabled = snapshot.status !== "waiting" || snapshot.seats[seat].phase !== "open" || appState.pending === "invitation";
+  }
+
+  const interactive = canInteract(snapshot) && appState.pending !== "action";
+  const actions = snapshot.legalActions || [];
+  appState = {
+    ...appState,
+    ui: {
+      ...appState.ui,
+      actionMode: resolveInteractionMode(snapshot, appState.ui.actionMode, appState.pending === "action")
+    }
+  };
+  byId("mode-move").disabled = !interactive || !actions.some((action) => action.type === "move");
+  byId("mode-wall").disabled = !interactive || !actions.some((action) => action.type === "place_wall");
+  byId("wall-orientation").disabled = !interactive || !actions.some((action) => action.type === "place_wall");
+  byId("wall-orientation").value = appState.ui.wallOrientation;
+  byId("mode-move").classList.toggle("active", appState.ui.actionMode === "move");
+  byId("mode-wall").classList.toggle("active", appState.ui.actionMode === "wall");
+  renderBoard(byId("board"), snapshot, {
+    legalActions: actions,
+    mode: appState.ui.actionMode,
+    orientation: appState.ui.wallOrientation,
+    interactive,
+    onAction: submitBoardAction,
+    onModeChange: (actionMode) => { appState = { ...appState, ui: { ...appState.ui, actionMode } }; renderAll(); },
+    onOrientationChange: (wallOrientation) => { appState = { ...appState, ui: { ...appState.ui, wallOrientation } }; renderAll(); },
+    onCancel: () => { appState = { ...appState, ui: { ...appState.ui, actionMode: "move" } }; renderAll(); }
   });
+
+  const logEntries = appState.record?.actions || (snapshot.lastAction ? [snapshot.lastAction] : []);
+  byId("action-log").replaceChildren(...(logEntries.length ? [...logEntries].reverse().slice(0, 8).map((entry) => {
+    const line = document.createElement("p");
+    line.textContent = formatAction(entry);
+    return line;
+  }) : [document.createTextNode("尚未行动")]));
+  renderRecord();
 }
 
-function acceptState(next) {
-  if (!shouldAcceptSnapshot(currentState, next)) return;
-  currentState = next;
-  if (next.yourPlayer) activeSeat = next.yourPlayer;
-  if (next.lastAction) actionEntries.set(next.lastAction.ply, next.lastAction);
-  byId("match-id").textContent = next.matchId;
-  renderAll();
-}
-
-async function refreshState() {
-  if (!activeMatchId) return;
-  const matchId = activeMatchId;
-  const token = activePlayerToken;
+async function loadFinishedRecord(matchId, epoch) {
+  if (appState.record || stageFor(appState) !== "finished") return;
   try {
-    const next = await api.state(matchId, token || undefined);
-    if (matchId === activeMatchId && token === activePlayerToken) {
-      acceptState(next);
-      if (refreshFailed) {
-        refreshFailed = false;
-        showError("");
-      }
+    const record = await api.record(matchId);
+    if (appState.identity.epoch === epoch && appState.identity.matchId === matchId) {
+      appState = { ...appState, record };
+      renderAll();
     }
   } catch (error) {
-    if (matchId === activeMatchId) {
-      refreshFailed = true;
-      showError(error.message);
-    }
+    showError(error.message);
   }
 }
+
+const refreshCoordinator = createRefreshCoordinator(async () => {
+  const { matchId, playerToken, epoch } = appState.identity;
+  if (!matchId) return;
+  try {
+    const snapshot = await api.state(matchId, playerToken || undefined);
+    appState = acceptSnapshot(appState, snapshot, epoch);
+    appState = { ...appState, connection: "live" };
+    showError();
+    renderAll();
+    await loadFinishedRecord(matchId, epoch);
+  } catch (error) {
+    if (appState.identity.epoch !== epoch) return;
+    showError(error.message);
+    appState = { ...appState, connection: "reconnecting" };
+    renderAll();
+  }
+});
 
 function connectEvents() {
   closeEvents();
-  if (!activeMatchId) return;
-  const matchId = activeMatchId;
+  const { matchId, epoch } = appState.identity;
+  if (!matchId) return;
   eventSource = api.events(matchId);
   eventSource.onopen = () => {
-    if (matchId !== activeMatchId) return;
-    connectionState = "live";
-    if (currentState) renderStatus(currentState);
+    if (appState.identity.epoch !== epoch) return;
+    appState = { ...appState, connection: "live" };
+    renderAll();
   };
-  eventSource.onmessage = (event) => {
-    if (matchId !== activeMatchId) return;
-    try {
-      const snapshot = JSON.parse(event.data);
-      if (!shouldAcceptSnapshot(currentState, snapshot)) return;
-      if (activePlayerToken) refreshState();
-      else acceptState(snapshot);
-    } catch (error) {
-      showError(error.message);
-    }
+  eventSource.onmessage = () => {
+    if (appState.identity.epoch === epoch) refreshCoordinator.refresh();
   };
   eventSource.onerror = () => {
-    if (matchId !== activeMatchId) return;
-    connectionState = "reconnecting";
-    if (currentState) renderStatus(currentState);
-    refreshState();
+    if (appState.identity.epoch !== epoch) return;
+    appState = { ...appState, connection: "reconnecting" };
+    renderAll();
+    refreshCoordinator.refresh();
   };
 }
 
-async function activateMatch(credentials, { persist = true } = {}) {
+async function activateMatch(identity, initialSnapshot = null, { claimCompatibility = false, persist = true } = {}) {
   closeEvents();
-  activeMatchId = credentials.matchId;
-  activeAdminToken = credentials.adminToken || null;
-  activePlayerToken = credentials.playerToken || null;
-  activeSeat = credentials.seat || "spectate";
-  currentSetup = null;
-  currentState = null;
-  actionEntries = new Map();
-  expiredRefresh = null;
-  connectionState = "live";
-  showError("");
-  byId("match-id").textContent = activeMatchId;
-  statusElement.textContent = "正在连接对局…";
-  resultElement.textContent = "";
-  actionLogElement.textContent = "尚未行动";
-  renderAgentSetup();
-  renderControls(null);
-
-  if (activeAdminToken) {
-    currentSetup = await api.setup(activeMatchId, activeAdminToken);
-    if (activeSeat === "left" || activeSeat === "right") {
-      activePlayerToken = currentSetup.playerTokens[activeSeat];
-      byId("agent-seat").value = activeSeat === "left" ? "right" : "left";
-    }
+  appState = activateIdentity(appState, identity);
+  invitationText = "";
+  byId("invitation-result").hidden = true;
+  showError();
+  if (claimCompatibility && identity.playerToken) {
+    initialSnapshot = await api.join(identity.matchId, identity.playerToken, { displayName: "浏览器玩家", clientType: "browser" });
   }
-  if (activePlayerToken) {
-    const joined = await api.join(activeMatchId, activePlayerToken, {
-      displayName: "浏览器玩家",
-      clientType: "browser"
-    });
-    acceptState(joined);
-  }
-  if (persist) saveSession();
-  renderAgentSetup();
+  if (initialSnapshot) appState = acceptSnapshot(appState, initialSnapshot, appState.identity.epoch);
+  if (persist) persistIdentity();
+  renderAll();
   connectEvents();
-  await refreshState();
+  await refreshCoordinator.refresh();
+}
+
+function resetToOutside() {
+  closeEvents();
+  appState = createAppState();
+  pendingRedemption = null;
+  invitationText = "";
+  localStorage.removeItem(STORAGE_KEY);
+  showError();
+  renderAll();
+}
+
+function randomRedemptionId() {
+  return [...crypto.getRandomValues(new Uint8Array(16))].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
 async function submitBoardAction(action) {
-  if (!canInteract(currentState) || actionPending) return;
-  const matchId = activeMatchId;
-  const token = activePlayerToken;
-  const expectedVersion = currentState.version;
-  actionPending = true;
-  showError("");
+  if (!canInteract(appState.snapshot) || appState.pending) return;
+  const { matchId, playerToken, epoch } = appState.identity;
+  appState = { ...appState, pending: "action" };
   renderAll();
   try {
-    const next = await api.submitAction(matchId, token, expectedVersion, action);
-    if (matchId === activeMatchId) acceptState(next);
+    const next = await api.submitAction(matchId, playerToken, appState.snapshot.version, action);
+    appState = acceptSnapshot(appState, next, epoch);
   } catch (error) {
-    if (matchId === activeMatchId) {
-      showError(error.message);
-      if (error.state) acceptState(error.state);
-      if (["STALE_STATE", "NOT_YOUR_TURN", "ILLEGAL_ACTION", "MATCH_FINISHED"].includes(error.code)) await refreshState();
-    }
+    showError(error.message);
+    if (error.state) appState = acceptSnapshot(appState, error.state, epoch);
   } finally {
-    if (matchId === activeMatchId) {
-      actionPending = false;
-      await refreshState();
-      renderAll();
-    }
+    if (appState.identity.epoch === epoch) appState = { ...appState, pending: null };
+    await refreshCoordinator.refresh();
+    renderAll();
   }
 }
 
 byId("create-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const submit = event.currentTarget.querySelector("button[type=submit]");
-  submit.disabled = true;
-  showError("");
+  const button = event.currentTarget.querySelector("button[type=submit]");
+  button.disabled = true;
   try {
-    const timeoutSeconds = byId("turn-timeout").value;
-    const config = {
-      wallLimit: byId("wall-mode").value === "finite" ? Number(byId("wall-limit").value) : null,
-      maxPlies: Number(byId("max-plies").value),
-      turnTimeoutMs: timeoutSeconds ? Number(timeoutSeconds) * 1000 : null,
-      firstPlayer: byId("first-player").value
-    };
     const seat = byId("seat").value;
+    const timeoutSeconds = byId("turn-timeout").value;
     const created = await api.create({
-      config,
-      ...(seat === "spectate" ? {} : {
-        claim: {
-          seat,
-          profile: { displayName: "浏览器玩家", clientType: "browser" }
-        }
-      })
+      config: {
+        wallLimit: byId("wall-mode").value === "finite" ? Number(byId("wall-limit").value) : null,
+        maxPlies: Number(byId("max-plies").value),
+        turnTimeoutMs: timeoutSeconds ? Number(timeoutSeconds) * 1000 : null,
+        firstPlayer: byId("first-player").value
+      },
+      ...(seat === "spectate" ? {} : { claim: { seat, profile: { displayName: byId("create-name").value.trim(), clientType: "browser" } } })
     });
     await activateMatch({
       matchId: created.matchId,
+      role: seat === "spectate" ? "admin" : "player",
+      seat,
       adminToken: created.adminToken,
-      playerToken: created.playerToken,
-      seat
-    });
+      playerToken: created.playerToken || null
+    }, created.state);
   } catch (error) {
     showError(error.message);
   } finally {
-    submit.disabled = false;
+    button.disabled = false;
   }
+});
+
+byId("invite-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const code = byId("invite-code").value.trim();
+  if (!pendingRedemption || pendingRedemption.code !== code) pendingRedemption = { code, redemptionId: randomRedemptionId() };
+  try {
+    const redeemed = await api.redeemInvitation({
+      inviteCode: code,
+      redemptionId: pendingRedemption.redemptionId,
+      profile: { displayName: byId("invite-name").value.trim(), clientType: "browser" }
+    });
+    pendingRedemption = null;
+    await activateMatch({ matchId: redeemed.matchId, role: "player", seat: redeemed.seat, playerToken: redeemed.playerToken }, redeemed.state);
+  } catch (error) {
+    showError(`${error.message}；如结果不确定，可直接重试同一邀请码。`);
+  }
+});
+
+byId("spectate-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await activateMatch({ matchId: byId("spectate-id").value.trim(), role: "spectator", seat: "spectate" });
 });
 
 byId("join-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const matchId = byId("join-id").value.trim();
   const playerToken = byId("join-token").value.trim();
-  try {
-    await activateMatch({ matchId, playerToken: playerToken || null, seat: playerToken ? "player" : "spectate" });
-    byId("join-token").value = "";
-  } catch (error) {
-    showError(error.message);
-  }
+  await activateMatch({ matchId, role: "player", seat: "player", playerToken }, null, { claimCompatibility: true });
+  byId("join-token").value = "";
 });
 
-byId("wall-mode").addEventListener("change", (event) => {
-  byId("wall-limit").disabled = event.target.value !== "finite";
-});
-byId("mode-move").addEventListener("click", () => {
-  interactionMode = "move";
-  renderAll();
-});
-byId("mode-wall").addEventListener("click", () => {
-  interactionMode = "wall";
-  renderAll();
-});
-byId("wall-orientation").addEventListener("change", (event) => {
-  wallOrientation = event.target.value;
-  renderAll();
-});
-byId("agent-seat").addEventListener("change", renderAgentSetup);
 byId("ready-toggle").addEventListener("click", async () => {
-  const ready = nextReadyValue(currentState);
-  if (ready === null || !activeMatchId || !activePlayerToken || readyPending) return;
-  readyPending = true;
-  showError("");
-  renderControls(currentState);
+  const ready = nextReadyValue(appState.snapshot);
+  if (ready === null || appState.pending) return;
+  const { matchId, playerToken, epoch } = appState.identity;
+  appState = { ...appState, pending: "ready" };
+  renderAll();
   try {
-    acceptState(await api.ready(activeMatchId, activePlayerToken, ready));
+    appState = acceptSnapshot(appState, await api.ready(matchId, playerToken, ready), epoch);
   } catch (error) {
     showError(error.message);
-    if (error.state) acceptState(error.state);
   } finally {
-    readyPending = false;
-    await refreshState();
+    if (appState.identity.epoch === epoch) appState = { ...appState, pending: null };
     renderAll();
   }
 });
+
+for (const seat of ["left", "right"]) {
+  byId(`invite-${seat}`).addEventListener("click", async () => {
+    if (!appState.identity.adminToken || appState.pending) return;
+    appState = { ...appState, pending: "invitation" };
+    renderAll();
+    try {
+      const invitation = await api.createInvitation(appState.identity.matchId, appState.identity.adminToken, seat);
+      invitationText = `加入邀请码 ${invitation.code} 并开始`;
+      byId("invitation-code").textContent = invitation.code;
+      byId("invitation-result").hidden = false;
+      appState = acceptSnapshot(appState, invitation.state, appState.identity.epoch);
+    } catch (error) {
+      showError(error.message);
+    } finally {
+      appState = { ...appState, pending: null };
+      renderAll();
+    }
+  });
+}
 
 async function copyText(text, button) {
   try {
@@ -394,53 +367,41 @@ async function copyText(text, button) {
     showError(error.message);
   }
 }
-byId("copy-mcp").addEventListener("click", (event) => copyText(byId("mcp-config").textContent, event.currentTarget));
-byId("copy-prompt").addEventListener("click", (event) => copyText(byId("agent-prompt").textContent, event.currentTarget));
+
+byId("copy-invitation").addEventListener("click", (event) => copyText(invitationText, event.currentTarget));
+byId("leave-match").addEventListener("click", resetToOutside);
+byId("new-match").addEventListener("click", resetToOutside);
 byId("abort-match").addEventListener("click", async () => {
-  if (!activeAdminToken || !window.confirm("确定中止当前对局？此操作不能撤销。")) return;
+  if (!appState.identity.adminToken || !window.confirm("确定中止当前对局？此操作不能撤销。")) return;
   try {
-    await api.abort(activeMatchId, activeAdminToken);
-    await refreshState();
+    await api.abort(appState.identity.matchId, appState.identity.adminToken);
+    await refreshCoordinator.refresh();
   } catch (error) {
     showError(error.message);
   }
 });
+byId("wall-mode").addEventListener("change", (event) => { byId("wall-limit").disabled = event.target.value !== "finite"; });
+byId("mode-move").addEventListener("click", () => { appState = { ...appState, ui: { ...appState.ui, actionMode: "move" } }; renderAll(); });
+byId("mode-wall").addEventListener("click", () => { appState = { ...appState, ui: { ...appState.ui, actionMode: "wall" } }; renderAll(); });
+byId("wall-orientation").addEventListener("change", (event) => { appState = { ...appState, ui: { ...appState.ui, wallOrientation: event.target.value } }; renderAll(); });
 
 setInterval(() => {
-  if (!currentState) return;
-  if (currentState.status === "finished") {
-    byId("countdown").textContent = "对局已结束";
-    return;
-  }
-  if (currentState.turnDeadlineAt === null) {
-    byId("countdown").textContent = "回合不限时";
-    return;
-  }
-  const remaining = Math.max(0, currentState.turnDeadlineAt - Date.now());
-  byId("countdown").textContent = remaining > 0
-    ? `${SEAT_NAMES[currentState.currentPlayer]} · 剩余 ${(remaining / 1000).toFixed(1)} 秒`
-    : "等待服务端结算超时…";
-  if (remaining === 0 && expiredRefresh !== currentState.turnDeadlineAt) {
-    expiredRefresh = currentState.turnDeadlineAt;
-    refreshState();
-  }
+  const snapshot = appState.snapshot;
+  if (!snapshot) { byId("countdown").textContent = "回合不限时"; return; }
+  if (snapshot.status === "finished") { byId("countdown").textContent = "对局已结束"; return; }
+  if (snapshot.turnDeadlineAt === null) { byId("countdown").textContent = "回合不限时"; return; }
+  const remaining = Math.max(0, snapshot.turnDeadlineAt - Date.now());
+  byId("countdown").textContent = remaining > 0 ? `${SEAT_NAMES[snapshot.currentPlayer]} · 剩余 ${(remaining / 1000).toFixed(1)} 秒` : "等待服务端结算超时…";
+  if (remaining === 0) refreshCoordinator.refresh();
 }, 250);
 
 async function restore() {
   let saved;
-  try {
-    saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-  } catch {
-    return;
-  }
-  if (!saved || typeof saved.matchId !== "string") return;
-  try {
-    await activateMatch(saved, { persist: false });
-  } catch (error) {
-    showError(`恢复对局失败：${error.message}`);
-  }
+  try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null"); } catch { return; }
+  if (!saved?.matchId) return;
+  try { await activateMatch(saved, null, { persist: false }); } catch (error) { showError(`恢复对局失败：${error.message}`); }
 }
 
-renderControls(null);
+renderAll();
 restore();
 window.addEventListener("beforeunload", closeEvents);
