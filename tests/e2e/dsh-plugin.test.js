@@ -15,7 +15,7 @@ class MemoryCredentials {
   async deleteRecord(key) { this.records.delete(key); }
 }
 
-function pluginHarness(credentials, baseUrl) {
+function pluginHarness(credentials, baseUrl, fetchImpl) {
   const tools = new Map();
   const effects = [];
   const ctx = {
@@ -23,7 +23,7 @@ function pluginHarness(credentials, baseUrl) {
     tools: { register(definition) { tools.set(definition.name, definition); return () => tools.delete(definition.name); } },
     effect(callback) { const dispose = callback(); effects.push(dispose); return dispose; }
   };
-  createBallChessPlugin().apply(ctx, { baseUrl });
+  createBallChessPlugin(fetchImpl === undefined ? {} : { fetchImpl }).apply(ctx, { baseUrl });
   return { tools, dispose: () => effects.splice(0).reverse().forEach((dispose) => dispose()) };
 }
 
@@ -31,7 +31,7 @@ function execution(id, signal = new AbortController().signal, header = {}) {
   return { agent: { id, session: { header } }, signal };
 }
 
-test("two DSH sessions play independently, resume cold, cancel waits, isolate forks, and erase finished grants", { timeout: 15000 }, async (t) => {
+test("two DSH sessions play independently, resume cold, cancel waits, isolate forks, and preserve terminal receipts", { timeout: 15000 }, async (t) => {
   await mkdir(path.join(process.cwd(), ".tmp"), { recursive: true });
   const directory = await mkdtemp(path.join(process.cwd(), ".tmp", "dsh-plugin-"));
   const service = await MatchService.open({ store: new MatchStore({ directory }) });
@@ -108,7 +108,16 @@ test("two DSH sessions play independently, resume cold, cancel waits, isolate fo
   if (!finalLeft.error) assert.equal(finalLeft.kind, "finished");
   const finalRight = await harness.tools.get("get_match_state").execute({}, rightExec).catch((error) => ({ error }));
   if (!finalRight.error) assert.equal(finalRight.kind, "finished");
-  assert.equal(credentials.records.has(credentialKeyForAgent("dsh-left")), false);
-  assert.equal(credentials.records.has(credentialKeyForAgent("dsh-right")), false);
+  for (const id of ["dsh-left", "dsh-right"]) {
+    const stored = credentials.records.get(credentialKeyForAgent(id));
+    assert.equal(stored.payload.state, "finished");
+    assert.equal(JSON.stringify(stored).includes("playerToken"), false);
+  }
   harness.dispose();
+  const offline = pluginHarness(credentials, baseUrl, async () => { throw new Error("network must not be used"); });
+  const recoveredLeft = await offline.tools.get("get_match_state").execute({}, leftExec);
+  const recoveredRight = await offline.tools.get("get_match_state").execute({}, rightExec);
+  assert.deepEqual(recoveredLeft.state.result, { kind: "win", winner: "left", reason: "reached_goal" });
+  assert.deepEqual(recoveredRight.state.result, recoveredLeft.state.result);
+  offline.dispose();
 });

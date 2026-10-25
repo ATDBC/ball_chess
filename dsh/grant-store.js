@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
-function fail() {
-  throw new Error("invalid Ball Chess grant record");
+function fail(detail = "") {
+  throw new Error(`invalid Ball Chess grant record${detail}`);
 }
 
 function exactKeys(value, expected) {
@@ -11,6 +11,17 @@ function exactKeys(value, expected) {
 
 function nonempty(value) {
   return typeof value === "string" && value.length > 0;
+}
+
+function secretKeyPath(value, path = "receipt") {
+  if (!value || typeof value !== "object") return null;
+  for (const [key, child] of Object.entries(value)) {
+    const childPath = `${path}.${key}`;
+    if (["playerToken", "playerTokens", "adminToken", "inviteCode"].includes(key)) return childPath;
+    const nested = secretKeyPath(child, childPath);
+    if (nested) return nested;
+  }
+  return null;
 }
 
 export function decodeGrant(record) {
@@ -27,6 +38,17 @@ export function decodeGrant(record) {
     if (!exactKeys(payload, ["version", "state", "baseUrl", "matchId", "seat", "playerToken"]) ||
         payload.version !== 1 || !nonempty(payload.baseUrl) || !nonempty(payload.matchId) ||
         !["left", "right"].includes(payload.seat) || !nonempty(payload.playerToken)) fail();
+    return structuredClone(payload);
+  }
+  if (payload?.state === "finished") {
+    const secret = secretKeyPath(payload.receipt);
+    if (!exactKeys(payload, ["version", "state", "matchId", "seat", "receipt"]) ||
+        payload.version !== 1 || !nonempty(payload.matchId) || !["left", "right"].includes(payload.seat) ||
+        !exactKeys(payload.receipt, ["kind", "state"]) || payload.receipt.kind !== "finished" ||
+        !payload.receipt.state || typeof payload.receipt.state !== "object" ||
+        payload.receipt.state.matchId !== payload.matchId || payload.receipt.state.status !== "finished" ||
+        !Number.isInteger(payload.receipt.state.version) || !payload.receipt.state.result) fail();
+    if (secret) fail(`: secret field ${secret}`);
     return structuredClone(payload);
   }
   fail();
@@ -73,6 +95,32 @@ export class BallChessGrantStore {
         throw Object.assign(new Error("The pending invitation redemption changed"), { code: "REDEMPTION_CHANGED" });
       }
       return { kind: "grant", payload: { version: 1, state: "bound", ...binding } };
+    });
+    return decodeGrant(record);
+  }
+
+  async finish(agentId, matchId, receipt) {
+    const key = credentialKeyForAgent(agentId);
+    const record = await this.credentials.modifyRecord(key, async (current) => {
+      const grant = decodeGrant(current);
+      if (grant?.state === "finished" && grant.matchId === matchId) return current;
+      if (grant?.state !== "bound" || grant.matchId !== matchId) {
+        throw Object.assign(new Error("The Ball Chess binding changed before the terminal receipt was saved"), {
+          code: "BINDING_CHANGED"
+        });
+      }
+      const next = {
+        kind: "grant",
+        payload: {
+          version: 1,
+          state: "finished",
+          matchId,
+          seat: grant.seat,
+          receipt: structuredClone(receipt)
+        }
+      };
+      decodeGrant(next);
+      return next;
     });
     return decodeGrant(record);
   }

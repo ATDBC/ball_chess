@@ -35,6 +35,45 @@ test("redeeming state reuses an id and is atomically replaced by bound state", a
   assert.equal(await store.read("agent-1"), null);
 });
 
+test("finishing atomically replaces the player token with a terminal receipt", async () => {
+  const credentials = new MemoryCredentials();
+  const store = new BallChessGrantStore(credentials);
+  const pending = await store.beginRedemption("agent-1", {
+    baseUrl: "http://127.0.0.1:7100",
+    inviteCode: "CODE",
+    redemptionId: "a".repeat(32)
+  });
+  await store.completeRedemption("agent-1", pending.redemptionId, {
+    baseUrl: pending.baseUrl,
+    matchId: "m_done",
+    seat: "left",
+    playerToken: "seat_secret"
+  });
+  const receipt = {
+    kind: "finished",
+    state: {
+      matchId: "m_done",
+      version: 9,
+      status: "finished",
+      yourPlayer: "left",
+      yourTurn: false,
+      result: { kind: "win", winner: "left", reason: "reached_goal" }
+    }
+  };
+  await store.finish("agent-1", "m_done", receipt);
+  const saved = await store.read("agent-1");
+  assert.deepEqual(saved, { version: 1, state: "finished", matchId: "m_done", seat: "left", receipt });
+  assert.equal(JSON.stringify(saved).includes("seat_secret"), false);
+
+  const next = await store.beginRedemption("agent-1", {
+    baseUrl: "http://127.0.0.1:7100",
+    inviteCode: "NEXT",
+    redemptionId: "b".repeat(32)
+  });
+  assert.equal(next.state, "redeeming");
+  assert.equal(next.inviteCode, "NEXT");
+});
+
 test("malformed records fail loud and inherited sessions are identifiable", async () => {
   const credentials = new MemoryCredentials();
   const store = new BallChessGrantStore(credentials);

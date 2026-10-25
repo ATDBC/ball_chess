@@ -64,20 +64,28 @@ test("join persists a bound grant while rendered output hides invitation and tok
   });
 });
 
-test("cold resume uses the session grant, forks do not inherit it, and finish deletes it", async () => {
+test("cold resume replaces the token with a recoverable terminal receipt", async () => {
   const credentials = new MemoryCredentials();
   credentials.records.set(credentialKeyForAgent("agent-1"), {
     kind: "grant",
     payload: { version: 1, state: "bound", baseUrl: "http://127.0.0.1:7100", matchId: "m_one", seat: "left", playerToken: "seat_secret" }
   });
-  const harness = context(credentials);
   const finished = { ...WAITING, version: 9, status: "finished", result: { kind: "win", winner: "left", reason: "reached_goal" } };
-  createBallChessPlugin({ fetchImpl: async () => new Response(JSON.stringify(finished), { status: 200 }) }).apply(harness.ctx, { baseUrl: "http://127.0.0.1:7100" });
-  const value = await harness.definitions.get("get_match_state").execute({}, exec());
+  const first = context(credentials);
+  createBallChessPlugin({ fetchImpl: async () => new Response(JSON.stringify(finished), { status: 200 }) }).apply(first.ctx, { baseUrl: "http://127.0.0.1:7100" });
+  const value = await first.definitions.get("get_match_state").execute({}, exec());
   assert.equal(value.kind, "finished");
-  assert.equal(await credentials.readRecord(credentialKeyForAgent("agent-1")), undefined);
+  const stored = await credentials.readRecord(credentialKeyForAgent("agent-1"));
+  assert.equal(stored.payload.state, "finished");
+  assert.equal(JSON.stringify(stored).includes("seat_secret"), false);
+  first.dispose();
+
+  const recovered = context(credentials);
+  createBallChessPlugin({ fetchImpl: async () => { throw new Error("network must not be used"); } }).apply(recovered.ctx, { baseUrl: "http://127.0.0.1:7100" });
+  assert.deepEqual(await recovered.definitions.get("get_match_state").execute({}, exec()), value);
   await assert.rejects(
-    harness.definitions.get("get_match_state").execute({}, exec("child", { isSeeded: true, parentSession: "parent" })),
+    recovered.definitions.get("get_match_state").execute({}, exec("child", { isSeeded: true, parentSession: "parent" })),
     (error) => error.code === "BINDING_NOT_INHERITED"
   );
+  recovered.dispose();
 });

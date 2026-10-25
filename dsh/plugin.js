@@ -67,15 +67,17 @@ export function createBallChessPlugin({ fetchImpl = fetch, redemptionIdFactory =
         if (grant.state === "redeeming") {
           throw new GameError("REDEMPTION_PENDING", "Retry join_by_invite with the same invitation to resolve the pending redemption");
         }
+        if (grant.state === "finished") return { agent, receipt: structuredClone(grant.receipt) };
         return { agent, client: cachedClient(agent.id, grant) };
       };
 
-      const cleanupFinished = async (agentId, result) => {
+      const settleFinished = async (agentId, result) => {
         if (result.state?.status !== "finished") return result;
-        await grants.delete(agentId);
+        const receipt = { kind: "finished", state: result.state };
+        await grants.finish(agentId, result.state.matchId, receipt);
         clients.get(agentId)?.client.close();
         clients.delete(agentId);
-        return result;
+        return receipt;
       };
 
       const execute = {
@@ -99,23 +101,27 @@ export function createBallChessPlugin({ fetchImpl = fetch, redemptionIdFactory =
           const binding = cached.client.exportBinding();
           await grants.completeRedemption(agent.id, pending.redemptionId, { baseUrl: pending.baseUrl, ...binding });
           clients.set(agent.id, { signature: `${pending.baseUrl}\0${binding.matchId}\0${binding.seat}`, client: cached.client });
-          return cleanupFinished(agent.id, readyResult);
+          return settleFinished(agent.id, readyResult);
         },
         async set_ready(args, exec) {
-          const { agent, client } = await requireClient(exec);
-          return cleanupFinished(agent.id, await client.setReady(args.ready));
+          const { agent, client, receipt } = await requireClient(exec);
+          if (receipt) return receipt;
+          return settleFinished(agent.id, await client.setReady(args.ready));
         },
         async get_match_state(_args, exec) {
-          const { agent, client } = await requireClient(exec);
-          return cleanupFinished(agent.id, stateResult(await client.getState()));
+          const { agent, client, receipt } = await requireClient(exec);
+          if (receipt) return receipt;
+          return settleFinished(agent.id, stateResult(await client.getState()));
         },
         async wait_for_turn(_args, exec) {
-          const { agent, client } = await requireClient(exec);
-          return cleanupFinished(agent.id, await client.waitForActionable({ signal: exec.signal }));
+          const { agent, client, receipt } = await requireClient(exec);
+          if (receipt) return receipt;
+          return settleFinished(agent.id, await client.waitForActionable({ signal: exec.signal }));
         },
         async submit_action(args, exec) {
-          const { agent, client } = await requireClient(exec);
-          return cleanupFinished(agent.id, await client.submitAction(args.expectedVersion, args.action));
+          const { agent, client, receipt } = await requireClient(exec);
+          if (receipt) return receipt;
+          return settleFinished(agent.id, await client.submitAction(args.expectedVersion, args.action));
         }
       };
 
