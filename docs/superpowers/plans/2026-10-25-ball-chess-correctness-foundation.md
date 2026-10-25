@@ -179,7 +179,7 @@ Leave `listLegalActions` in `settleCurrentTurn`; that function genuinely asks wh
 Run:
 
 ```powershell
-node --test tests/core
+node --test "tests/core/*.test.js"
 ```
 
 Expected: all core tests PASS.
@@ -1095,7 +1095,7 @@ The first caller establishes the requested identity before another network reque
 Run:
 
 ```powershell
-node --test tests/mcp
+node --test "tests/mcp/*.test.js"
 ```
 
 Expected: all MCP tests PASS, including pre-bound lazy join, shared failure recovery, and concurrent different joins.
@@ -1133,7 +1133,7 @@ Do not document invitations, ready state, DSH presets, or record v2 in this phas
 Run:
 
 ```powershell
-node --test tests/core tests/server tests/mcp
+node --test "tests/core/*.test.js" "tests/server/*.test.js" "tests/mcp/*.test.js"
 ```
 
 Expected: all selected tests PASS.
