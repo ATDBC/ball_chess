@@ -34,6 +34,9 @@ test("the checkpoint prompt is game-specific and configuration-driven", () => {
   assert.match(BALL_CHESS_COMPACTION_INSTRUCTION, /finite or unlimited/i);
   assert.match(BALL_CHESS_COMPACTION_INSTRUCTION, /get_match_state/);
   assert.match(BALL_CHESS_COMPACTION_INSTRUCTION, /wait_for_turn/);
+  assert.match(BALL_CHESS_COMPACTION_INSTRUCTION, /actionId/);
+  assert.match(BALL_CHESS_COMPACTION_INSTRUCTION, /get_match_record/);
+  assert.match(BALL_CHESS_COMPACTION_INSTRUCTION, /do not invent or recommend/i);
   assert.match(BALL_CHESS_COMPACTION_INSTRUCTION, /player token/i);
   assert.doesNotMatch(BALL_CHESS_COMPACTION_INSTRUCTION, /10 walls/i);
 });

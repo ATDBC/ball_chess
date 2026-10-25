@@ -113,8 +113,8 @@ export class BallChessAgentClient {
     return projectState(await this.request(`/api/matches/${encodeURIComponent(matchId)}/state`));
   }
 
-  async getRecord() {
-    const { matchId } = this.requireBinding();
+  async getRecord(explicitMatchId = null) {
+    const matchId = explicitMatchId ?? this.requireBinding().matchId;
     return projectRecord(await this.request(`/api/matches/${encodeURIComponent(matchId)}/record`, { token: null }));
   }
 

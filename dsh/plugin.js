@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { parseActionId } from "../agent/action-id.js";
 import { BallChessAgentClient } from "../agent/client.js";
 import { renderAgentResult } from "../agent/projection.js";
 import { GameError } from "../core/errors.js";
@@ -49,6 +50,7 @@ export function createBallChessPlugin({ fetchImpl = fetch, redemptionIdFactory =
       const configuredBaseUrl = validateBaseUrl(config.baseUrl);
       const grants = new BallChessGrantStore(ctx.credentials);
       const clients = new Map();
+      const publicClient = new BallChessAgentClient({ baseUrl: configuredBaseUrl, fetchImpl, clientType: "dsh" });
 
       const cachedClient = (agentId, grant) => {
         const signature = `${grant.baseUrl}\0${grant.matchId}\0${grant.seat}`;
@@ -141,6 +143,13 @@ export function createBallChessPlugin({ fetchImpl = fetch, redemptionIdFactory =
           if (receipt) return receipt;
           return settleFinished(agent.id, stateResult(await client.getState()));
         },
+        async get_match_record(_args, exec) {
+          const { client, receipt } = await requireClient(exec);
+          const record = receipt
+            ? await publicClient.getRecord(receipt.state.matchId)
+            : await client.getRecord();
+          return { kind: "record", record };
+        },
         async wait_for_turn(_args, exec) {
           const { agent, client, receipt } = await requireClient(exec);
           if (receipt) return receipt;
@@ -149,7 +158,7 @@ export function createBallChessPlugin({ fetchImpl = fetch, redemptionIdFactory =
         async submit_action(args, exec) {
           const { agent, client, receipt } = await requireClient(exec);
           if (receipt) return receipt;
-          return settleFinished(agent.id, await client.submitAction(args.expectedVersion, args.action));
+          return settleFinished(agent.id, await client.submitAction(args.expectedVersion, parseActionId(args.actionId)));
         }
       };
 
@@ -168,6 +177,7 @@ export function createBallChessPlugin({ fetchImpl = fetch, redemptionIdFactory =
           for (const dispose of disposers.reverse()) dispose();
           for (const { client } of clients.values()) client.close();
           clients.clear();
+          publicClient.close();
         };
       });
     }

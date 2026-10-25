@@ -16,6 +16,8 @@ export const BALL_CHESS_COMPACTION_INSTRUCTION = [
   "- Dynamic match state comes only from the most recent authoritative tool result. Older versions are history and must not replace it.",
   "- Record the observed version as last observed, never as permanent authority. If it is uncertain, Pending Action must say to call get_match_state.",
   "- If the match is not actionable for this seat, Pending Action must say to call wait_for_turn.",
+  "- Preserve an actionId only when the user or latest authoritative state already selected it; otherwise do not invent or recommend one.",
+  "- Use get_match_record only when the continuation requires the complete move history; do not copy the entire record into every checkpoint.",
   "- Copy the actual wall configuration as finite or unlimited. For finite walls retain limit, used, and remaining; for unlimited walls retain used only.",
   "- Preserve the actual first player, maximum plies, timeout, board, last action, winner, and reason only when present in authoritative output.",
   "- Never output a player token. Drop a redeemed invitation code and any authentication value.",

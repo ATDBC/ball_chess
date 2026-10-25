@@ -7,6 +7,8 @@ test("agent setup contains only the requested seat credential", () => {
   assert.ok(prompt.includes("set_ready"));
   assert.ok(prompt.indexOf("set_ready") < prompt.indexOf("wait_for_turn"));
   assert.ok(prompt.includes("wait_for_turn"));
+  assert.ok(prompt.includes("actionId"));
+  assert.ok(prompt.includes("get_match_record"));
   assert.ok(prompt.includes("left"));
   assert.ok(!prompt.includes("left_secret"));
   assert.ok(!prompt.includes("join_match"));

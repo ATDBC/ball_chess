@@ -15,6 +15,9 @@ test("overlay declares a minimal Ball Chess preset", async () => {
   assert.match(source, /name: '@deepseek-ai\/dsh-persona'/);
   assert.match(source, /complete: true/);
   assert.match(source, /rules 与 wallBudgets.*本局完整规则/);
+  assert.match(source, /actionId/);
+  assert.match(source, /get_match_record/);
+  assert.doesNotMatch(source, /最短路径|胜率|推荐行动/);
   assert.doesNotMatch(source, /9×13|y=12/);
   for (const forbidden of ["tool-bash", "tool-pwsh", "tool-fs", "tool-browser", "tool-web", "tool-subagent", "tool-workflow", "tool-plugin-manager"]) {
     assert.ok(!source.includes(forbidden), `${forbidden} must not be mounted`);

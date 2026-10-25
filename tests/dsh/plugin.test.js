@@ -45,7 +45,9 @@ test("plugin validates loopback config and registers only Ball Chess tools as ef
   assert.throws(() => plugin.apply(context().ctx, { baseUrl: "https://example.com" }), /loopback HTTP/);
   const harness = context();
   plugin.apply(harness.ctx, { baseUrl: "http://127.0.0.1:7100" });
-  assert.deepEqual([...harness.definitions.keys()], ["join_by_invite", "set_ready", "get_match_state", "wait_for_turn", "submit_action"]);
+  assert.deepEqual([...harness.definitions.keys()], [
+    "join_by_invite", "set_ready", "get_match_state", "get_match_record", "wait_for_turn", "submit_action"
+  ]);
   for (const definition of harness.definitions.values()) {
     assert.deepEqual(definition.output.schema, { type: "object", additionalProperties: true });
     assert.equal(JSON.stringify(definition.parameters).includes("playerToken"), false);
@@ -166,10 +168,42 @@ test("terminal settlement preserves the live submit result contract", async () =
 
   const value = await harness.definitions.get("submit_action").execute({
     expectedVersion: 8,
-    action: { type: "move", direction: "up" }
+    actionId: "move:up"
   }, exec());
   assert.equal(value.ok, true);
   assert.equal(value.kind, "finished");
   assert.equal((await credentials.readRecord(credentialKeyForAgent("agent-1"))).payload.receipt.kind, "finished");
   harness.dispose();
+});
+
+test("a finished DSH receipt can read the public record without restoring a token", async () => {
+  const credentials = new MemoryCredentials();
+  credentials.records.set(credentialKeyForAgent("agent-1"), {
+    kind: "grant",
+    payload: { version: 1, state: "bound", baseUrl: "http://127.0.0.1:7100", matchId: "m_one", seat: "left", playerToken: "seat_secret" }
+  });
+  const finished = { ...WAITING, version: 9, status: "finished", result: { kind: "win", winner: "left", reason: "reached_goal" } };
+  const first = context(credentials);
+  createBallChessPlugin({ fetchImpl: async () => new Response(JSON.stringify(finished), { status: 200 }) })
+    .apply(first.ctx, { baseUrl: "http://127.0.0.1:7100" });
+  await first.definitions.get("get_match_state").execute({}, exec());
+  first.dispose();
+
+  const record = {
+    schemaVersion: 1, matchId: "m_one", config: WAITING.config,
+    actions: [{ player: "left", ply: 1, action: { type: "move", direction: "up" }, at: 10 }],
+    result: finished.result, createdAt: 0, updatedAt: 10
+  };
+  const second = context(credentials);
+  createBallChessPlugin({
+    fetchImpl: async (url, options) => {
+      assert.equal(url, "http://127.0.0.1:7100/api/matches/m_one/record");
+      assert.equal(options.headers.authorization, undefined);
+      return new Response(JSON.stringify(record), { status: 200 });
+    }
+  }).apply(second.ctx, { baseUrl: "http://127.0.0.1:7100" });
+  const value = await second.definitions.get("get_match_record").execute({}, exec());
+  assert.equal(value.kind, "record");
+  assert.equal(value.record.actions[0].actionId, "move:up");
+  second.dispose();
 });
