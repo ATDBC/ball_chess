@@ -109,3 +109,62 @@ test("deadline wins when an action arrives exactly at the deadline", async (t) =
   assert.equal(state.plies, 0);
   assert.deepEqual(state.result, { kind: "win", winner: "right", reason: "turn_timeout" });
 });
+
+test("a broken update listener cannot turn a committed action into a failure", async (t) => {
+  const background = [];
+  const { store, service, created } = await fixture(t, {}, {
+    onBackgroundError: (error, context) => background.push({ error, context })
+  });
+  service.on("update", () => { throw new Error("subscriber broke"); });
+
+  const accepted = await service.submitAction(
+    created.matchId,
+    created.playerTokens.left,
+    2,
+    { type: "move", direction: "up" }
+  );
+  assert.equal(accepted.version, 3);
+  assert.equal(background.length, 1);
+  assert.equal(background[0].context.operation, "publish_update");
+
+  const restored = await MatchService.open({ store });
+  t.after(() => restored.close());
+  assert.equal((await restored.getState(created.matchId)).version, 3);
+});
+
+test("a rejected asynchronous update listener is reported in the background", async (t) => {
+  const background = [];
+  const { service, created } = await fixture(t, {}, {
+    onBackgroundError: (error, context) => background.push({ error, context })
+  });
+  service.on("update", async () => { throw new Error("async subscriber broke"); });
+
+  const accepted = await service.submitAction(
+    created.matchId,
+    created.playerTokens.left,
+    2,
+    { type: "move", direction: "up" }
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(accepted.version, 3);
+  assert.equal(background.length, 1);
+  assert.equal(background[0].context.operation, "publish_update");
+});
+
+test("a failed save changes neither memory nor notifications", async (t) => {
+  const { store, service, created } = await fixture(t);
+  const saved = store.save.bind(store);
+  let updates = 0;
+  service.on("update", () => { updates += 1; });
+  store.save = async () => { throw new Error("disk full"); };
+
+  await assert.rejects(
+    service.submitAction(created.matchId, created.playerTokens.left, 2, { type: "move", direction: "up" }),
+    (error) => error.code === "STORAGE_ERROR"
+  );
+  assert.equal((await service.getState(created.matchId)).version, 2);
+  assert.equal(updates, 0);
+
+  store.save = saved;
+});

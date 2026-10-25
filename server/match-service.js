@@ -28,13 +28,15 @@ export class MatchService extends EventEmitter {
   constructor(store, {
     now = Date.now,
     setTimer = setTimeout,
-    clearTimer = clearTimeout
+    clearTimer = clearTimeout,
+    onBackgroundError = (error) => console.error(error)
   } = {}) {
     super();
     this.store = store;
     this.now = now;
     this.setTimer = setTimer;
     this.clearTimer = clearTimer;
+    this.onBackgroundError = onBackgroundError;
     this.matches = new Map();
     this.timers = new Map();
     this.unavailable = new Map();
@@ -93,8 +95,30 @@ export class MatchService extends EventEmitter {
     }
     this.matches.set(candidate.id, candidate);
     this.armTimer(candidate);
-    this.emit("update", { matchId: candidate.id, state: toPublicState(candidate) });
+    this.publishUpdate(candidate);
     return candidate;
+  }
+
+  reportBackgroundError(error, context) {
+    try {
+      this.onBackgroundError(error, context);
+    } catch (reportError) {
+      console.error("Ball Chess background error reporter failed", reportError);
+    }
+  }
+
+  publishUpdate(record) {
+    const payload = { matchId: record.id, state: toPublicState(record) };
+    for (const listener of this.rawListeners("update")) {
+      try {
+        const pending = listener.call(this, payload);
+        Promise.resolve(pending).catch((error) => {
+          this.reportBackgroundError(error, { operation: "publish_update", matchId: record.id });
+        });
+      } catch (error) {
+        this.reportBackgroundError(error, { operation: "publish_update", matchId: record.id });
+      }
+    }
   }
 
   armTimer(record) {
@@ -105,7 +129,7 @@ export class MatchService extends EventEmitter {
     const delay = Math.max(0, record.turnDeadlineAt - this.now());
     const timer = this.setTimer(() => {
       this.expire(record.id, record.version).catch((error) => {
-        this.emit("persistenceError", { matchId: record.id, error });
+        this.reportBackgroundError(error, { operation: "expire_turn", matchId: record.id });
       });
     }, delay);
     timer.unref?.();
