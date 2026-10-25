@@ -23,6 +23,6 @@
               - id: compaction-basic
                 name: '@deepseek-ai/dsh-compaction-basic'
           - id: ball-chess-tools
-            name: 'E:/My_project/ball_chess/dsh/plugin.js'
+            name: 'file:///E:/My_project/ball_chess/dsh/plugin.js'
             config:
               baseUrl: !!js process.env.BALL_CHESS_URL ?? 'http://127.0.0.1:7100'

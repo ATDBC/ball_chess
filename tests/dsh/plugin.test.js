@@ -38,7 +38,7 @@ test("plugin validates loopback config and registers only Ball Chess tools as ef
   plugin.apply(harness.ctx, { baseUrl: "http://127.0.0.1:7100" });
   assert.deepEqual([...harness.definitions.keys()], ["join_by_invite", "set_ready", "get_match_state", "wait_for_turn", "submit_action"]);
   for (const definition of harness.definitions.values()) {
-    assert.deepEqual(definition.output.schema, { type: "json" });
+    assert.deepEqual(definition.output.schema, { type: "object", additionalProperties: true });
     assert.equal(JSON.stringify(definition.parameters).includes("playerToken"), false);
   }
   harness.dispose();

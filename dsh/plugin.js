@@ -125,7 +125,7 @@ export function createBallChessPlugin({ fetchImpl = fetch, redemptionIdFactory =
           description: tool.description,
           parameters: tool.inputSchema,
           output: {
-            schema: { type: "json" },
+            schema: { type: "object", additionalProperties: true },
             render: (_args, value) => [{ type: "text", text: renderAgentResult(value) }]
           },
           execute: execute[tool.name]
