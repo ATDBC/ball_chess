@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createGame } from "../../core/state.js";
-import { applyAction, settleCurrentTurn } from "../../core/engine.js";
+import { applyAction, getActionError, settleCurrentTurn } from "../../core/engine.js";
 
 test("left wins on ply 23 when both players only advance", () => {
   let game = createGame();
@@ -49,4 +49,24 @@ test("no legal action loses instead of deadlocking", () => {
   game.walls.push({ orientation: "h", x: 0, y: 1 });
   const settled = settleCurrentTurn(game);
   assert.deepEqual(settled.result, { kind: "win", winner: "right", reason: "no_legal_action" });
+});
+
+test("a requested wall is validated without enumerating every wall anchor", () => {
+  const game = createGame({ wallLimit: 10 });
+  let wallCountReads = 0;
+  Object.defineProperty(game.players.left, "wallsUsed", {
+    enumerable: true,
+    get() {
+      wallCountReads += 1;
+      return 0;
+    }
+  });
+
+  assert.equal(getActionError(game, "left", {
+    type: "place_wall",
+    orientation: "h",
+    x: 0,
+    y: 1
+  }), null);
+  assert.equal(wallCountReads, 1);
 });

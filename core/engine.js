@@ -1,8 +1,8 @@
 import { HEIGHT } from "./constants.js";
 import { GameError } from "./errors.js";
 import { otherPlayer } from "./state.js";
-import { destinationFor } from "./movement.js";
-import { actionEquals, listLegalActions, wallPlacementError } from "./legal.js";
+import { destinationFor, listLegalMoves } from "./movement.js";
+import { listLegalActions, wallPlacementError } from "./legal.js";
 
 export function getActionError(game, playerId, action) {
   if (game.result) return new GameError("MATCH_FINISHED", "Match is finished", { result: game.result });
@@ -15,9 +15,12 @@ export function getActionError(game, playerId, action) {
   if (actualKeys.length !== expectedKeys.length || expectedKeys.some((key) => !Object.hasOwn(action, key))) {
     return new GameError("ILLEGAL_ACTION", "Action has missing or unknown fields", { reason: "INVALID_ACTION" });
   }
-  if (listLegalActions(game, playerId).some((candidate) => actionEquals(candidate, action))) return null;
-  const reason = action.type === "place_wall" ? wallPlacementError(game, playerId, action) || "ILLEGAL_MOVE" : "ILLEGAL_MOVE";
-  return new GameError("ILLEGAL_ACTION", "Action is not legal", { reason });
+  if (action.type === "move") {
+    const legal = listLegalMoves(game, playerId).some((candidate) => candidate.direction === action.direction);
+    return legal ? null : new GameError("ILLEGAL_ACTION", "Action is not legal", { reason: "ILLEGAL_MOVE" });
+  }
+  const reason = wallPlacementError(game, playerId, action);
+  return reason === null ? null : new GameError("ILLEGAL_ACTION", "Action is not legal", { reason });
 }
 
 export function settleCurrentTurn(game) {
