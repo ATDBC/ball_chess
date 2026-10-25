@@ -148,9 +148,9 @@ Kimi / Claude / Codex                     │
 ### 4.4 MCP 适配器 `mcp/`
 
 - 使用官方 MCP SDK，是首版唯一必需的第三方包。
-- 每个 agent 启动独立 stdio 进程；进程内只保存一个对局会话。
+- 每个 agent 启动独立 stdio 进程；进程内只保存一个对局会话。预绑定进程通过 `--match` 与显式 `BALL_CHESS_PLAYER_TOKEN` 环境变量取得席位，不把令牌暴露给模型。
 - 适配器不复制规则，不保存另一份权威棋盘，不替 agent 选棋。
-- 相同 `matchId + playerToken` 重复加入视为重连；一个已加入进程不能无提示地切换到另一对局或席位。
+- 预绑定进程在第一个状态、等待或行动调用前幂等加入；相同 `matchId + playerToken` 重复加入视为重连，因此子进程替换后可以恢复席位。一个已加入进程不能无提示地切换到另一对局或席位。
 - 不支持 MCP 的程序可直接使用 HTTP API，因此两类客户端没有对局语义分叉。
 
 ## 5. 对局状态
@@ -207,7 +207,7 @@ Kimi / Claude / Codex                     │
 - `yourTurn`：当前是否轮到该席位行动。
 - `legalActions`：仅在自己的有效行动回合提供完整合法行动对象列表；其他情况为空数组。
 
-MCP 还返回 ASCII 棋盘，帮助大模型理解空间关系；ASCII 只是展示，JSON 才是提交行动的依据。
+MCP 还返回 ASCII 棋盘，帮助大模型理解空间关系；ASCII 只是展示，JSON 才是提交行动的依据。MCP 不重复返回 HTTP 的完整行动对象数组，而是把合法移动投影为 `legalActions.moves`，把合法墙锚点投影为 `legalActions.walls.h` 与 `legalActions.walls.v`，降低重复状态的上下文开销。
 
 ## 6. HTTP 与 SSE 接口
 
@@ -253,11 +253,11 @@ SSE 约定：
 
 ## 7. MCP 工具
 
-首版只提供四个工具：
+预绑定进程提供三个无需模型处理凭据的工具；不带 `--match` 的通用进程额外提供 `join_match`：
 
 | 工具 | 输入与行为 |
 |---|---|
-| `join_match` | 输入 `matchId + playerToken`，可附带显示名；加入后由当前 stdio 进程保存会话 |
+| `join_match` | 仅通用进程提供；输入 `matchId + playerToken`，可附带显示名；加入后由当前 stdio 进程保存会话 |
 | `get_match_state` | 返回 JSON 状态、ASCII 棋盘、`yourTurn` 和当前合法行动 |
 | `wait_for_turn` | 等待自己的回合或结束；默认等待 10 秒，单次上限 15 秒，超时返回 `waiting: true` 而非错误 |
 | `submit_action` | 输入 `expectedVersion + action`；返回新状态，或结构化错误、最新状态和合法行动 |
@@ -335,7 +335,7 @@ data/matches/<matchId>.json
 - 等待对方或观战时锁定操作控件。
 - 侧栏提供创建/加入、席位状态、agent 接入信息、最近行动和最终结果。
 - 双方均为 agent 时自动呈现观战模式，不显示当前用户不可用的走棋控件。
-- 为每个 agent 席位提供可复制的 MCP 配置、房间令牌和启动提示词。
+- 为每个 agent 席位提供可复制的预绑定 MCP 配置和不含凭据的启动提示词。
 - 尊重 `prefers-reduced-motion`，关键状态不只依靠颜色表达。
 
 ### 10.2 美术方向：A · 现代拟物 / Soft Industrial

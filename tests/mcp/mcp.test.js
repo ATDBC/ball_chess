@@ -8,7 +8,7 @@ import { MatchStore } from "../../server/store.js";
 import { MatchService } from "../../server/match-service.js";
 import { createApp } from "../../server/app.js";
 
-test("two independent stdio MCP clients share a match and recover from stale actions", { timeout: 15000 }, async (t) => {
+test("pre-bound stdio MCP clients recover their seats after process replacement", { timeout: 15000 }, async (t) => {
   await mkdir(path.join(process.cwd(), ".tmp"), { recursive: true });
   const directory = await mkdtemp(path.join(process.cwd(), ".tmp", "mcp-"));
   const service = await MatchService.open({ store: new MatchStore({ directory }) });
@@ -26,12 +26,12 @@ test("two independent stdio MCP clients share a match and recover from stale act
     await rm(directory, { recursive: true, force: true });
   });
 
-  async function connectAgent(name) {
+  async function connectClient(name, args, env = process.env) {
     const client = new Client({ name, version: "1.0.0" });
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: [path.resolve("mcp/index.js"), "--url", baseUrl],
-      env: { ...process.env }
+      args: [path.resolve("mcp/index.js"), "--url", baseUrl, ...args],
+      env: { ...env }
     });
     try {
       await client.connect(transport);
@@ -43,19 +43,37 @@ test("two independent stdio MCP clients share a match and recover from stale act
     }
   }
 
+  const connectAgent = (name, matchId, playerToken) => connectClient(
+    name,
+    ["--match", matchId],
+    { ...process.env, BALL_CHESS_PLAYER_TOKEN: playerToken }
+  );
+
   const created = await fetch(`${baseUrl}/api/matches`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ maxPlies: 40 })
   }).then((response) => response.json());
-  const left = await connectAgent("test-left");
-  const right = await connectAgent("test-right");
+  const manual = await connectClient("test-manual", []);
+  const manualTools = await manual.listTools();
+  assert.deepEqual(manualTools.tools.map((tool) => tool.name), [
+    "join_match", "get_match_state", "wait_for_turn", "submit_action"
+  ]);
+  await manual.callTool({
+    name: "join_match",
+    arguments: { matchId: created.matchId, playerToken: created.playerTokens.left }
+  });
+  const manualState = await manual.callTool({ name: "get_match_state", arguments: {} });
+  assert.equal(manualState.structuredContent.yourPlayer, "left");
+  await manual.close();
+  const left = await connectAgent("test-left", created.matchId, created.playerTokens.left);
+  let right = await connectAgent("test-right", created.matchId, created.playerTokens.right);
   const listed = await left.listTools();
-  assert.deepEqual(listed.tools.map((tool) => tool.name), ["join_match", "get_match_state", "wait_for_turn", "submit_action"]);
-  await left.callTool({ name: "join_match", arguments: { matchId: created.matchId, playerToken: created.playerTokens.left } });
-  await right.callTool({ name: "join_match", arguments: { matchId: created.matchId, playerToken: created.playerTokens.right } });
+  assert.deepEqual(listed.tools.map((tool) => tool.name), ["get_match_state", "wait_for_turn", "submit_action"]);
+  const waitingState = await right.callTool({ name: "get_match_state", arguments: {} });
+  assert.equal(waitingState.structuredContent.status, "playing");
+  assert.equal(waitingState.structuredContent.yourTurn, false);
   const waiting = right.callTool({ name: "wait_for_turn", arguments: { timeoutSeconds: 3 } });
-  await new Promise((resolve) => setTimeout(resolve, 50));
   const played = await left.callTool({
     name: "submit_action",
     arguments: { expectedVersion: 2, action: { type: "move", direction: "up" } }
@@ -64,7 +82,10 @@ test("two independent stdio MCP clients share a match and recover from stale act
   const awakened = await waiting;
   assert.equal(awakened.structuredContent.waiting, false);
   assert.equal(awakened.structuredContent.state.yourTurn, true);
+  await right.close();
+  right = await connectAgent("test-right-reconnected", created.matchId, created.playerTokens.right);
   const viewed = await right.callTool({ name: "get_match_state", arguments: {} });
+  assert.equal(viewed.structuredContent.yourPlayer, "right");
   assert.deepEqual(viewed.structuredContent.players.left.position, [2, 1]);
   assert.ok(viewed.structuredContent.ascii.includes("L"));
   const rejected = await right.callTool({
@@ -78,8 +99,8 @@ test("two independent stdio MCP clients share a match and recover from stale act
     const agent = expectedVersion % 2 === 0 ? left : right;
     const current = await agent.callTool({ name: "get_match_state", arguments: {} });
     if (current.structuredContent.status === "finished") break;
-    const action = current.structuredContent.legalActions.find((candidate) => candidate.type === "move" && candidate.direction === "up")
-      || current.structuredContent.legalActions[0];
+    assert.ok(current.structuredContent.legalActions.moves.includes("up"));
+    const action = { type: "move", direction: "up" };
     const next = await agent.callTool({ name: "submit_action", arguments: { expectedVersion, action } });
     assert.equal(next.structuredContent.ok, true);
   }

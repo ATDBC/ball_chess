@@ -119,10 +119,12 @@ function renderAgentSetup() {
   section.hidden = !currentSetup;
   if (!currentSetup) return;
   const seat = byId("agent-seat").value;
-  byId("mcp-config").textContent = JSON.stringify(buildMcpConfig(currentSetup.mcp), null, 2);
+  byId("mcp-config").textContent = JSON.stringify(buildMcpConfig(currentSetup.mcp, {
+    matchId: activeMatchId,
+    playerToken: currentSetup.playerTokens[seat]
+  }), null, 2);
   byId("agent-prompt").textContent = buildAgentPrompt({
     matchId: activeMatchId,
-    token: currentSetup.playerTokens[seat],
     seat
   });
   byId("abort-match").disabled = Boolean(currentState?.result);

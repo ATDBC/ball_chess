@@ -2,15 +2,26 @@ import { GameError } from "../core/errors.js";
 import { toAscii } from "./ascii.js";
 
 function withAscii(state) {
-  return { ...state, ascii: toAscii(state) };
+  const projected = { ...state, ascii: toAscii(state) };
+  if (Array.isArray(state.legalActions)) {
+    const legalActions = { moves: [], walls: { h: [], v: [] } };
+    for (const action of state.legalActions) {
+      if (action.type === "move") legalActions.moves.push(action.direction);
+      if (action.type === "place_wall") legalActions.walls[action.orientation].push([action.x, action.y]);
+    }
+    projected.legalActions = legalActions;
+  }
+  return projected;
 }
 
 export class AgentSession {
-  constructor({ baseUrl, fetchImpl = fetch }) {
+  constructor({ baseUrl, matchId = null, token = null, fetchImpl = fetch }) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.fetch = fetchImpl;
-    this.matchId = null;
-    this.token = null;
+    this.matchId = matchId;
+    this.token = token;
+    this.joined = false;
+    this.joining = null;
   }
 
   async request(suffix, { token = this.token, ...options } = {}) {
@@ -33,8 +44,19 @@ export class AgentSession {
     return body;
   }
 
-  requireJoined() {
+  requireBinding() {
     if (!this.matchId || !this.token) throw new GameError("NOT_JOINED", "Call join_match before using this tool");
+  }
+
+  async ensureJoined() {
+    this.requireBinding();
+    if (this.joined) return;
+    if (!this.joining) {
+      this.joining = this.join(this.matchId, this.token).finally(() => {
+        this.joining = null;
+      });
+    }
+    await this.joining;
   }
 
   async join(matchId, token, name) {
@@ -48,16 +70,17 @@ export class AgentSession {
     });
     this.matchId = matchId;
     this.token = token;
+    this.joined = true;
     return withAscii(state);
   }
 
   async getState() {
-    this.requireJoined();
+    await this.ensureJoined();
     return withAscii(await this.request(`/api/matches/${this.matchId}/state`));
   }
 
   async submitAction(expectedVersion, action) {
-    this.requireJoined();
+    await this.ensureJoined();
     try {
       const state = await this.request(`/api/matches/${this.matchId}/actions`, {
         method: "POST",
@@ -83,7 +106,7 @@ export class AgentSession {
   }
 
   async waitForTurn(timeoutSeconds = 10) {
-    this.requireJoined();
+    await this.ensureJoined();
     let state = await this.getState();
     const finished = () => state.status === "finished" || Boolean(state.result);
     if (state.yourTurn || finished()) return { waiting: false, state };
