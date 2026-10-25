@@ -45,6 +45,9 @@ test("checkpoint validation requires every section exactly once and in order", (
   assert.throws(() => assertBallChessCheckpoint(`preface\n${checkpoint()}`), /start with/);
   assert.throws(() => assertBallChessCheckpoint(`${checkpoint()}\n\n## Extra\n- no`), /unexpected section/);
   assert.throws(() => assertBallChessCheckpoint(checkpoint().replace("- (none)", "plain prose")), /bullets/);
+  assert.throws(() => assertBallChessCheckpoint(SECTIONS.map((section) => `## ${section}`).join("\n\n")), /empty section/);
+  assert.throws(() => assertBallChessCheckpoint(checkpoint().replace("- (none)", "- ")), /non-empty bullet/);
+  assert.throws(() => assertBallChessCheckpoint(checkpoint().replace("## Pending Action\n- (none)", "## Pending Action")), /empty section/);
   assert.throws(() => assertBallChessCheckpoint(checkpoint().replace("- (none)", "- playerToken=secret")), /sensitive/);
   assert.throws(() => assertBallChessCheckpoint(checkpoint().replace("- (none)", "- invite 01234-56789-ABCDE-FGHJK-MNPQRS")), /invitation/);
   assert.throws(() => assertBallChessCheckpoint("   "), /empty/);

@@ -66,7 +66,8 @@ export function assertBallChessCheckpoint(text) {
   if (!normalized.startsWith(`## ${SECTIONS[0]}\n`)) {
     throw new Error(`Ball Chess compaction checkpoint must start with section: ${SECTIONS[0]}`);
   }
-  const headingLines = normalized.split("\n").filter((line) => line.startsWith("## "));
+  const lines = normalized.split("\n");
+  const headingLines = lines.filter((line) => line.startsWith("## "));
   const expectedHeadings = SECTIONS.map((section) => `## ${section}`);
   for (const heading of headingLines) {
     if (!expectedHeadings.includes(heading)) {
@@ -81,9 +82,20 @@ export function assertBallChessCheckpoint(text) {
   if (headingLines.join("\0") !== expectedHeadings.join("\0")) {
     throw new Error("Ball Chess compaction checkpoint sections are out of order");
   }
-  const contentLines = normalized.split("\n").filter((line) => line.length > 0 && !line.startsWith("## "));
+  const contentLines = lines.filter((line) => line.length > 0 && !line.startsWith("## "));
   if (contentLines.some((line) => !line.startsWith("- "))) {
     throw new Error("Ball Chess compaction checkpoint section content must use bullets");
+  }
+  const headingIndexes = expectedHeadings.map((heading) => lines.indexOf(heading));
+  for (let index = 0; index < expectedHeadings.length; index += 1) {
+    const body = lines.slice(headingIndexes[index] + 1, headingIndexes[index + 1] ?? lines.length)
+      .filter((line) => line.length > 0);
+    if (body.length === 0) {
+      throw new Error(`Ball Chess compaction checkpoint has empty section: ${SECTIONS[index]}`);
+    }
+    if (body.some((line) => !/^- \S/.test(line))) {
+      throw new Error(`Ball Chess compaction checkpoint section requires a non-empty bullet: ${SECTIONS[index]}`);
+    }
   }
   if (/\b(?:player[ _-]?token|admin[ _-]?token|authorization|bearer)\b/i.test(normalized)) {
     throw new Error("Ball Chess compaction checkpoint contains sensitive authentication content");
