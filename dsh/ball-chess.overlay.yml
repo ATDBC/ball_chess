@@ -23,7 +23,7 @@
               compaction: true
             config:
               - id: ball-chess-compaction
-                name: './compaction-plugin.js'
+                name: 'ball-chess/dsh/compaction-plugin'
                 config:
                   auto: true
                   thresholdRatio: 0.8
@@ -33,6 +33,6 @@
                   compactionRetries: 1
                   maxOverflowRetries: 1
           - id: ball-chess-tools
-            name: './plugin.js'
+            name: 'ball-chess/dsh/plugin'
             config:
               baseUrl: !!js process.env.BALL_CHESS_URL ?? 'http://127.0.0.1:7100'

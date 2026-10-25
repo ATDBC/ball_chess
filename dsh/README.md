@@ -19,7 +19,7 @@ pnpm.cmd --dir E:\Program\deepseek-harness dsh plugin --profile web add E:\My_pr
 pnpm.cmd --dir E:\Program\deepseek-harness dsh web
 ```
 
-The profile stores a link to the checkout. The bundle resolves `plugin.js` and `compaction-plugin.js` relative to its own patch file, so moving the project only requires reinstalling the link; the YAML contains no machine-specific absolute module URL. Remove it with `pnpm.cmd --dir E:\Program\deepseek-harness dsh plugin --profile web remove ball-chess`.
+The profile stores a link to the checkout. Preset child rows use the exported package subpaths `ball-chess/dsh/plugin` and `ball-chess/dsh/compaction-plugin`; nested preset rows are not resolved relative to the bundle patch file. Moving the project only requires reinstalling the link, and the YAML contains no machine-specific absolute module URL. Remove it with `pnpm.cmd --dir E:\Program\deepseek-harness dsh plugin --profile web remove ball-chess`.
 
 Create a conversation with the **Ball Chess player** preset and send:
 

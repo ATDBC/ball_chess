@@ -108,7 +108,7 @@
 
 ## 4. DSH bundle 与预设装配
 
-Ball Chess 根项目声明为一个本地可安装的 DSH bundle。bundle patch 位于项目内，并插入 Ball Chess Agent preset。工具插件和专用压缩插件都使用相对于 bundle patch 的模块路径。
+Ball Chess 根项目声明为一个本地可安装的 DSH bundle。bundle patch 位于项目内，并插入 Ball Chess Agent preset。由于 preset 的嵌套插件行不继承 bundle patch 的解析基址，工具插件和专用压缩插件通过 `package.json` 导出的 `ball-chess/dsh/plugin` 与 `ball-chess/dsh/compaction-plugin` 子路径加载；配置中不保存机器相关绝对路径。
 
 安装方式为：
 

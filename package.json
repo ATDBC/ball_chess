@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./dsh/plugin": "./dsh/plugin.js",
+    "./dsh/compaction-plugin": "./dsh/compaction-plugin.js"
+  },
   "dsh": {
     "bundle": {
       "patch": "./dsh/ball-chess.overlay.yml"
