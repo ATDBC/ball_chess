@@ -2,11 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   abortMatchRecord,
+  claimMatchRecord,
   createMatchRecord,
   expireMatchRecord,
   joinMatchRecord,
   restoreMatch,
   serializeMatch,
+  setReadyMatchRecord,
   statusFor,
   submitMatchAction,
   toPublicState
@@ -85,6 +87,86 @@ test("serialize always emits v2 without persisted status", () => {
   assert.equal(Object.hasOwn(raw, "status"), false);
   assert.equal(Object.hasOwn(raw, "game"), false);
   assert.equal(raw.result, null);
+});
+
+test("claim occupies one open seat without starting and duplicate claim is idempotent", () => {
+  const waiting = waitingRecord({ turnTimeoutMs: 10 });
+  const claimed = claimMatchRecord(
+    waiting,
+    "left",
+    { displayName: "Left", clientType: "test" },
+    110
+  );
+  assert.equal(claimed.seats.left.phase, "claimed");
+  assert.equal(claimed.startedAt, null);
+  assert.equal(claimed.turnDeadlineAt, null);
+  assert.equal(claimed.version, 1);
+  assert.equal(statusFor(claimed), "waiting");
+  assert.strictEqual(
+    claimMatchRecord(claimed, "left", { displayName: "Changed", clientType: "test" }, 120),
+    claimed
+  );
+  assert.equal(claimed.seats.left.profile.displayName, "Left");
+});
+
+test("ready requires a claim, toggles before start, and ignores repeated values", () => {
+  const waiting = waitingRecord();
+  assert.throws(
+    () => setReadyMatchRecord(waiting, "left", true, 110),
+    (error) => error.code === "SEAT_NOT_CLAIMED"
+  );
+  const claimed = claimMatchRecord(waiting, "left", {}, 110);
+  const ready = setReadyMatchRecord(claimed, "left", true, 120);
+  assert.equal(ready.seats.left.phase, "ready");
+  assert.equal(ready.startedAt, null);
+  assert.equal(ready.version, 2);
+  assert.strictEqual(setReadyMatchRecord(ready, "left", true, 130), ready);
+
+  const cancelled = setReadyMatchRecord(ready, "left", false, 130);
+  assert.equal(cancelled.seats.left.phase, "claimed");
+  assert.equal(cancelled.version, 3);
+  assert.strictEqual(setReadyMatchRecord(cancelled, "left", false, 140), cancelled);
+});
+
+test("the second ready starts once and establishes the first deadline", () => {
+  let record = waitingRecord({ turnTimeoutMs: 10 });
+  record = claimMatchRecord(record, "left", {}, 110);
+  record = claimMatchRecord(record, "right", {}, 120);
+  record = setReadyMatchRecord(record, "left", true, 130);
+  const started = setReadyMatchRecord(record, "right", true, 140);
+  assert.equal(started.seats.left.phase, "ready");
+  assert.equal(started.seats.right.phase, "ready");
+  assert.equal(started.startedAt, 140);
+  assert.equal(started.updatedAt, 140);
+  assert.equal(started.turnDeadlineAt, 150);
+  assert.equal(started.version, 4);
+  assert.equal(statusFor(started), "playing");
+  assert.throws(
+    () => setReadyMatchRecord(started, "left", false, 145),
+    (error) => error.code === "MATCH_ALREADY_STARTED"
+  );
+});
+
+test("abort clears active invitations and retains consumed redemption receipts", () => {
+  const record = waitingRecord();
+  record.invitations.left = {
+    generation: 1,
+    digest: "a".repeat(64),
+    expiresAt: 1000,
+    consumedAt: null,
+    redemptionId: null
+  };
+  record.invitations.right = {
+    generation: 1,
+    digest: "b".repeat(64),
+    expiresAt: 1000,
+    consumedAt: 105,
+    redemptionId: "c".repeat(32)
+  };
+  record.seats.right = { phase: "claimed", profile: {} };
+  const aborted = abortMatchRecord(record, 110);
+  assert.equal(aborted.invitations.left, null);
+  assert.deepEqual(aborted.invitations.right, record.invitations.right);
 });
 
 test("restore migrates waiting v1 seats to open and claimed", () => {

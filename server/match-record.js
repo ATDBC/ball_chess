@@ -267,8 +267,46 @@ export function restoreMatch(raw) {
   return restored;
 }
 
-// Transitional compatibility for existing token-based clients. Task 3 replaces
-// this join-triggered start with separate claim and ready transitions.
+export function claimMatchRecord(record, seat, profile, now = Date.now()) {
+  if (record.seats[seat].phase !== "open") return record;
+  if (record.game.result) {
+    throw new GameError("MATCH_FINISHED", "Match is finished", { result: record.game.result });
+  }
+  const next = structuredClone(record);
+  next.seats[seat] = { phase: "claimed", profile: structuredClone(profile) };
+  if (next.invitations[seat]?.consumedAt === null) next.invitations[seat] = null;
+  next.updatedAt = now;
+  next.version += 1;
+  return next;
+}
+
+export function setReadyMatchRecord(record, seat, ready, now = Date.now()) {
+  if (record.game.result) {
+    throw new GameError("MATCH_FINISHED", "Match is finished", { result: record.game.result });
+  }
+  if (record.startedAt !== null) {
+    throw new GameError("MATCH_ALREADY_STARTED", "Match has already started");
+  }
+  if (record.seats[seat].phase === "open") {
+    throw new GameError("SEAT_NOT_CLAIMED", "Seat must be claimed before it can be ready");
+  }
+  const targetPhase = ready ? "ready" : "claimed";
+  if (record.seats[seat].phase === targetPhase) return record;
+
+  const next = structuredClone(record);
+  next.seats[seat].phase = targetPhase;
+  next.updatedAt = now;
+  next.version += 1;
+  if (next.seats.left.phase === "ready" && next.seats.right.phase === "ready") {
+    next.startedAt = now;
+    next.game = settleCurrentTurn(next.game);
+    next.turnDeadlineAt = next.game.result ? null : deadlineFor(next, now);
+  }
+  return next;
+}
+
+// Transitional compatibility for token-based clients until the service and
+// clients adopt separate claim and ready requests.
 export function joinMatchRecord(record, seat, profile, now = Date.now()) {
   if (record.seats[seat].phase !== "open") return record;
   if (record.game.result) throw new GameError("MATCH_FINISHED", "Match is finished", { result: record.game.result });
@@ -323,5 +361,8 @@ export function abortMatchRecord(record, now = Date.now()) {
   next.version += 1;
   next.updatedAt = now;
   next.turnDeadlineAt = null;
+  for (const seat of SEATS) {
+    if (next.invitations[seat]?.consumedAt === null) next.invitations[seat] = null;
+  }
   return next;
 }
