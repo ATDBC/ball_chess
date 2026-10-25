@@ -83,7 +83,7 @@ v2 对局记录包含以下概念字段：
 - `open` 席位的 `profile` 必须为空；`claimed` 和 `ready` 席位必须有 profile。
 - 只有两个席位都是 `ready` 时才能首次设置 `startedAt`。
 - `startedAt !== null` 后席位阶段固定为 `ready`，不可退回。
-- `playing` 必须有当前回合截止时间；`waiting` 和 `finished` 不得有有效截止时间。
+- 限时配置下的 `playing` 必须有当前回合截止时间；不限时配置以及 `waiting`、`finished` 不得有截止时间。
 - `result !== null` 后不得再接受准备、邀请兑换或行动。
 - 重放 `actions` 得到的棋盘、行动方和规则内结果必须与持久化字段一致。
 - 如果重放仍未结束，持久化结果只能是超时或管理员中止这类规则外结果。
