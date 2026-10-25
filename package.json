@@ -3,8 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "dsh": {
+    "bundle": {
+      "patch": "./dsh/ball-chess.overlay.yml"
+    }
+  },
   "engines": {
-    "node": ">=22"
+    "node": ">=22",
+    "dsh": ">=0.2.1-rc.3 <0.3.0"
   },
   "scripts": {
     "dev": "node server/index.js",
@@ -14,5 +20,9 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-compaction-basic": ">=0.2.1-rc.3 <0.3.0",
+    "@deepseek-ai/dsh-llm": ">=0.2.1-rc.3 <0.3.0"
   }
 }

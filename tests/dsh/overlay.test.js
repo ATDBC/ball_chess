@@ -6,13 +6,22 @@ test("overlay declares a minimal Ball Chess preset", async () => {
   const source = await readFile(new URL("../../dsh/ball-chess.overlay.yml", import.meta.url), "utf8");
   assert.match(source, /name: '@deepseek-ai\/dsh-agent-preset'/);
   assert.match(source, /id: ball-chess/);
-  const pluginName = source.match(/name: '([^']*ball_chess\/dsh\/plugin\.js)'/)?.[1];
-  assert.ok(pluginName, "overlay must name the Ball Chess plugin");
-  assert.equal(new URL(pluginName).protocol, "file:", "Windows ESM plugins require a file URL");
+  assert.match(source, /name: '\.\/plugin\.js'/);
+  assert.match(source, /name: '\.\/compaction-plugin\.js'/);
+  assert.doesNotMatch(source, /file:\/\/\//);
+  assert.doesNotMatch(source, /E:\//);
   assert.match(source, /name: '@deepseek-ai\/dsh-persona'/);
   assert.match(source, /complete: true/);
-  assert.match(source, /name: '@deepseek-ai\/dsh-compaction-basic'/);
+  assert.match(source, /墙.*本局.*工具返回/);
   for (const forbidden of ["tool-bash", "tool-pwsh", "tool-fs", "tool-browser", "tool-web", "tool-subagent", "tool-workflow", "tool-plugin-manager"]) {
     assert.ok(!source.includes(forbidden), `${forbidden} must not be mounted`);
   }
+});
+
+test("the project is a portable DSH bundle", async () => {
+  const manifest = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8"));
+  assert.deepEqual(manifest.dsh, { bundle: { patch: "./dsh/ball-chess.overlay.yml" } });
+  assert.match(manifest.engines.dsh, /0\.2\.1/);
+  assert.ok(manifest.peerDependencies["@deepseek-ai/dsh-compaction-basic"]);
+  assert.ok(manifest.peerDependencies["@deepseek-ai/dsh-llm"]);
 });
