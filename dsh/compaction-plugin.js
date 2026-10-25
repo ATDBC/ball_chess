@@ -1,5 +1,5 @@
 import BasicCompactionEngine from "@deepseek-ai/dsh-compaction-basic";
-import { BlockAssembler, contentHasImage, LlmError } from "@deepseek-ai/dsh-llm";
+import { BlockAssembler, LlmError } from "@deepseek-ai/dsh-llm";
 import {
   BALL_CHESS_COMPACTION_INSTRUCTION,
   assertBallChessCheckpoint,
@@ -40,12 +40,17 @@ export default class BallChessCompactionEngine extends BasicCompactionEngine {
     if (assembler.finish.kind === "max-tokens") {
       throw Object.assign(new Error("Ball Chess compaction summary was truncated"), { code: "MAX_TOKENS" });
     }
+    if (assembler.finish.kind !== "stop") {
+      throw Object.assign(new Error(`Ball Chess compaction summary stopped with ${assembler.finish.kind}`), {
+        code: "UNSUPPORTED_FINISH"
+      });
+    }
 
     const rawOutput = assembler.blocks();
-    if (contentHasImage(rawOutput)) {
-      throw new LlmError("Ball Chess compaction summary cannot contain images", "UNSUPPORTED_CONTENT");
+    if (rawOutput.some((block) => block.type !== "text")) {
+      throw new LlmError("Ball Chess compaction summary must contain text only", "UNSUPPORTED_CONTENT");
     }
-    const summary = rawOutput.filter((block) => block.type === "text");
+    const summary = rawOutput;
     assertBallChessCheckpoint(summary.map((block) => block.text).join(""));
     return {
       summary,

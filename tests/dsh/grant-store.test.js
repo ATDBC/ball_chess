@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BallChessGrantStore, credentialKeyForAgent, inheritedSession } from "../../dsh/grant-store.js";
+import { projectState } from "../../agent/projection.js";
+import { createGame } from "../../core/state.js";
+import { BallChessGrantStore, credentialKeyForAgent, decodeGrant, inheritedSession } from "../../dsh/grant-store.js";
 
 class MemoryCredentials {
   records = new Map();
@@ -49,17 +51,7 @@ test("finishing atomically replaces the player token with a terminal receipt", a
     seat: "left",
     playerToken: "seat_secret"
   });
-  const receipt = {
-    kind: "finished",
-    state: {
-      matchId: "m_done",
-      version: 9,
-      status: "finished",
-      yourPlayer: "left",
-      yourTurn: false,
-      result: { kind: "win", winner: "left", reason: "reached_goal" }
-    }
-  };
+  const receipt = terminalReceipt();
   await store.finish("agent-1", "m_done", receipt);
   const saved = await store.read("agent-1");
   assert.deepEqual(saved, { version: 1, state: "finished", matchId: "m_done", seat: "left", receipt });
@@ -72,6 +64,53 @@ test("finishing atomically replaces the player token with a terminal receipt", a
   });
   assert.equal(next.state, "redeeming");
   assert.equal(next.inviteCode, "NEXT");
+});
+
+function terminalReceipt() {
+  return {
+    kind: "finished",
+    state: projectState({
+      ...createGame({ wallLimit: 4, maxPlies: 80, turnTimeoutMs: 30_000, firstPlayer: "right" }),
+      matchId: "m_done",
+      version: 9,
+      status: "finished",
+      turnDeadlineAt: null,
+      seats: {
+        left: { phase: "ready", profile: { displayName: "Left", clientType: "dsh" }, invitation: null },
+        right: { phase: "ready", profile: { displayName: "Right", clientType: "web" }, invitation: null }
+      },
+      yourPlayer: "left",
+      yourTurn: false,
+      legalActions: [],
+      plies: 1,
+      lastAction: { player: "left", ply: 1, action: { type: "move", direction: "up" } },
+      result: { kind: "win", winner: "left", reason: "reached_goal" }
+    })
+  };
+}
+
+test("finished records reject forged seats, outcomes, versions, and extra fields", () => {
+  const record = {
+    kind: "grant",
+    payload: { version: 1, state: "finished", matchId: "m_done", seat: "left", receipt: terminalReceipt() }
+  };
+  assert.equal(decodeGrant(record).receipt.state.yourPlayer, "left");
+
+  const forgedSeat = structuredClone(record);
+  forgedSeat.payload.receipt.state.yourPlayer = "right";
+  assert.throws(() => decodeGrant(forgedSeat), /invalid Ball Chess grant/);
+
+  const forgedResult = structuredClone(record);
+  forgedResult.payload.receipt.state.result = { bogus: true };
+  assert.throws(() => decodeGrant(forgedResult), /invalid Ball Chess grant/);
+
+  const negativeVersion = structuredClone(record);
+  negativeVersion.payload.receipt.state.version = -1;
+  assert.throws(() => decodeGrant(negativeVersion), /invalid Ball Chess grant/);
+
+  const extraField = structuredClone(record);
+  extraField.payload.receipt.state.untrusted = true;
+  assert.throws(() => decodeGrant(extraField), /invalid Ball Chess grant/);
 });
 
 test("malformed records fail loud and inherited sessions are identifiable", async () => {

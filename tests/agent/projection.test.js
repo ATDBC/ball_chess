@@ -10,6 +10,23 @@ test("rule facts preserve the actual match configuration", () => {
     board: { width: 9, height: 13, origin: "bottom-left" },
     starts: { left: [2, 0], right: [6, 0] },
     goals: { left: 12, right: 12 },
+    turn: { actions: 1, choices: ["move", "place_wall"], passAllowed: false },
+    movement: {
+      directions: ["up", "down", "left", "right"],
+      distance: 1,
+      diagonalAllowed: false,
+      jumpAllowed: false,
+      occupiedCellAllowed: false
+    },
+    wallPlacement: {
+      edges: 2,
+      overlapAllowed: false,
+      crossingAllowed: false,
+      endpointConnectionAllowed: true,
+      tJunctionAllowed: true,
+      preservePathFor: ["left", "right"]
+    },
+    outcome: { maxPliesResult: "draw" },
     firstPlayer: "right",
     maxPlies: 80,
     turnTimeoutMs: 30_000,

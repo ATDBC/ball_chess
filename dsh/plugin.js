@@ -77,7 +77,7 @@ export function createBallChessPlugin({ fetchImpl = fetch, redemptionIdFactory =
         await grants.finish(agentId, result.state.matchId, receipt);
         clients.get(agentId)?.client.close();
         clients.delete(agentId);
-        return receipt;
+        return result;
       };
 
       const execute = {

@@ -42,6 +42,11 @@ test("checkpoint validation requires every section exactly once and in order", (
   assert.equal(assertBallChessCheckpoint(checkpoint()), checkpoint());
   assert.throws(() => assertBallChessCheckpoint("## Match Identity\n- m_one"), /missing section/);
   assert.throws(() => assertBallChessCheckpoint(`${checkpoint()}\n\n## Outcome\n- duplicate`), /duplicate section/);
+  assert.throws(() => assertBallChessCheckpoint(`preface\n${checkpoint()}`), /start with/);
+  assert.throws(() => assertBallChessCheckpoint(`${checkpoint()}\n\n## Extra\n- no`), /unexpected section/);
+  assert.throws(() => assertBallChessCheckpoint(checkpoint().replace("- (none)", "plain prose")), /bullets/);
+  assert.throws(() => assertBallChessCheckpoint(checkpoint().replace("- (none)", "- playerToken=secret")), /sensitive/);
+  assert.throws(() => assertBallChessCheckpoint(checkpoint().replace("- (none)", "- invite 01234-56789-ABCDE-FGHJK-MNPQRS")), /invitation/);
   assert.throws(() => assertBallChessCheckpoint("   "), /empty/);
 });
 

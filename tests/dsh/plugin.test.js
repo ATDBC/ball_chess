@@ -23,8 +23,17 @@ function context(credentials = new MemoryCredentials()) {
 
 const WAITING = {
   matchId: "m_one", version: 2, status: "waiting", yourPlayer: "left", yourTurn: false,
-  seats: { left: { phase: "claimed" }, right: { phase: "open" } }, config: { wallLimit: null },
-  players: { left: { position: [2, 0], wallsUsed: 0 }, right: { position: [6, 0], wallsUsed: 0 } }, walls: [], legalActions: []
+  seats: {
+    left: { phase: "claimed", profile: { displayName: "Left", clientType: "dsh" }, invitation: null },
+    right: { phase: "open", profile: null, invitation: null }
+  },
+  config: { width: 9, height: 13, wallLimit: null, maxPlies: 300, turnTimeoutMs: null, firstPlayer: "left" },
+  players: {
+    left: { color: "red", position: [2, 0], wallsUsed: 0 },
+    right: { color: "blue", position: [6, 0], wallsUsed: 0 }
+  },
+  walls: [], currentPlayer: "left", plies: 0, lastAction: null, result: null, turnDeadlineAt: null,
+  legalActions: []
 };
 
 function exec(id = "agent-1", header = {}) {
@@ -88,4 +97,25 @@ test("cold resume replaces the token with a recoverable terminal receipt", async
     (error) => error.code === "BINDING_NOT_INHERITED"
   );
   recovered.dispose();
+});
+
+test("terminal settlement preserves the live submit result contract", async () => {
+  const credentials = new MemoryCredentials();
+  credentials.records.set(credentialKeyForAgent("agent-1"), {
+    kind: "grant",
+    payload: { version: 1, state: "bound", baseUrl: "http://127.0.0.1:7100", matchId: "m_one", seat: "left", playerToken: "seat_secret" }
+  });
+  const finished = { ...WAITING, version: 9, status: "finished", result: { kind: "win", winner: "left", reason: "reached_goal" } };
+  const harness = context(credentials);
+  createBallChessPlugin({ fetchImpl: async () => new Response(JSON.stringify(finished), { status: 200 }) })
+    .apply(harness.ctx, { baseUrl: "http://127.0.0.1:7100" });
+
+  const value = await harness.definitions.get("submit_action").execute({
+    expectedVersion: 8,
+    action: { type: "move", direction: "up" }
+  }, exec());
+  assert.equal(value.ok, true);
+  assert.equal(value.kind, "finished");
+  assert.equal((await credentials.readRecord(credentialKeyForAgent("agent-1"))).payload.receipt.kind, "finished");
+  harness.dispose();
 });

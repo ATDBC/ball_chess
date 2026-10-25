@@ -89,10 +89,15 @@ function legalText(summary) {
 function rulesText(rules) {
   if (!rules) return "";
   const timeout = rules.turnTimeoutMs === null ? "none" : rules.turnTimeoutMs;
-  return `rules=board ${rules.board.width}x${rules.board.height} origin=${rules.board.origin} ` +
-    `goals=left:y${rules.goals.left},right:y${rules.goals.right} first=${rules.firstPlayer} ` +
-    `maxPlies=${rules.maxPlies} timeout=${timeout}; move=one orthogonal cell, no jump/pass; ` +
-    "wall=two edges, no overlap/cross, both players keep a path";
+  return `rules=${rules.board.width}x${rules.board.height} origin=${rules.board.origin} ` +
+    `starts=L(${rules.starts.left.join(",")}),R(${rules.starts.right.join(",")}) goals=L:y${rules.goals.left},R:y${rules.goals.right}; ` +
+    `turn=${rules.turn.actions} of ${rules.turn.choices.join("|")},pass=${rules.turn.passAllowed}; ` +
+    `move=${rules.movement.distance} orthogonal (${rules.movement.directions.join("|")}),` +
+    `diagonal=${rules.movement.diagonalAllowed},jump=${rules.movement.jumpAllowed},occupied=${rules.movement.occupiedCellAllowed}; ` +
+    `wall=${rules.wallPlacement.edges} edges,overlap=${rules.wallPlacement.overlapAllowed},cross=${rules.wallPlacement.crossingAllowed},` +
+    `endpoint=${rules.wallPlacement.endpointConnectionAllowed},T=${rules.wallPlacement.tJunctionAllowed},` +
+    `paths=${rules.wallPlacement.preservePathFor.join("|")}; first=${rules.firstPlayer} ` +
+    `maxPlies=${rules.maxPlies}=>${rules.outcome.maxPliesResult} timeout=${timeout}`;
 }
 
 function wallText(budgets) {

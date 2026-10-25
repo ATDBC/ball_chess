@@ -24,11 +24,12 @@ test("rule panel follows finite and unlimited wall settings", () => {
   };
   assert.deepEqual(rulePanelLines(base), [
     "棋盘 9×13；双方目标均为到达 y=12",
-    "每回合正交移动一格，或放置一堵不封死任一方路径的两边墙",
+    "每回合只能行动一次：正交移动一格或放置一堵覆盖两条边的墙；不能斜走、跳跃、进入对方格或跳过回合",
+    "墙不得重叠或交叉；允许端点连接和 T 形连接，并且必须为双方保留到达目标行的路径",
     "先手：左方；最多 300 手；不限时",
     "墙：每方 5 堵；左方剩余 3，右方剩余 4"
   ]);
-  assert.equal(rulePanelLines({ ...base, config: { ...base.config, wallLimit: null } })[3], "墙：无限；左方已用 2，右方已用 1");
+  assert.equal(rulePanelLines({ ...base, config: { ...base.config, wallLimit: null } })[4], "墙：无限；左方已用 2，右方已用 1");
 });
 
 test("snapshots cannot roll the board backward", () => {

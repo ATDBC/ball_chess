@@ -62,16 +62,35 @@ export function assertBallChessCheckpoint(text) {
   if (typeof text !== "string" || text.trim().length === 0) {
     throw new Error("Ball Chess compaction checkpoint is empty");
   }
-  let previous = -1;
-  for (const section of SECTIONS) {
-    const heading = `## ${section}`;
-    const first = text.indexOf(heading);
-    if (first === -1) throw new Error(`Ball Chess compaction checkpoint is missing section: ${section}`);
-    if (text.indexOf(heading, first + heading.length) !== -1) {
-      throw new Error(`Ball Chess compaction checkpoint has duplicate section: ${section}`);
+  const normalized = text.replaceAll("\r\n", "\n").trim();
+  if (!normalized.startsWith(`## ${SECTIONS[0]}\n`)) {
+    throw new Error(`Ball Chess compaction checkpoint must start with section: ${SECTIONS[0]}`);
+  }
+  const headingLines = normalized.split("\n").filter((line) => line.startsWith("## "));
+  const expectedHeadings = SECTIONS.map((section) => `## ${section}`);
+  for (const heading of headingLines) {
+    if (!expectedHeadings.includes(heading)) {
+      throw new Error(`Ball Chess compaction checkpoint has unexpected section: ${heading.slice(3)}`);
     }
-    if (first < previous) throw new Error(`Ball Chess compaction checkpoint section is out of order: ${section}`);
-    previous = first;
+  }
+  for (const heading of expectedHeadings) {
+    const count = headingLines.filter((line) => line === heading).length;
+    if (count === 0) throw new Error(`Ball Chess compaction checkpoint is missing section: ${heading.slice(3)}`);
+    if (count > 1) throw new Error(`Ball Chess compaction checkpoint has duplicate section: ${heading.slice(3)}`);
+  }
+  if (headingLines.join("\0") !== expectedHeadings.join("\0")) {
+    throw new Error("Ball Chess compaction checkpoint sections are out of order");
+  }
+  const contentLines = normalized.split("\n").filter((line) => line.length > 0 && !line.startsWith("## "));
+  if (contentLines.some((line) => !line.startsWith("- "))) {
+    throw new Error("Ball Chess compaction checkpoint section content must use bullets");
+  }
+  if (/\b(?:player[ _-]?token|admin[ _-]?token|authorization|bearer)\b/i.test(normalized)) {
+    throw new Error("Ball Chess compaction checkpoint contains sensitive authentication content");
+  }
+  const invitePattern = /(?:^|[^0-9A-Z])(?:[0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{6}|[0-9A-HJKMNP-TV-Z]{26})(?=$|[^0-9A-Z])/i;
+  if (invitePattern.test(normalized)) {
+    throw new Error("Ball Chess compaction checkpoint contains a redeemed invitation code");
   }
   return text;
 }

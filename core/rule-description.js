@@ -5,6 +5,23 @@ export function describeMatchRules(config) {
     board: { width: WIDTH, height: HEIGHT, origin: "bottom-left" },
     starts: { left: [...START_POSITIONS.left], right: [...START_POSITIONS.right] },
     goals: { left: HEIGHT - 1, right: HEIGHT - 1 },
+    turn: { actions: 1, choices: ["move", "place_wall"], passAllowed: false },
+    movement: {
+      directions: ["up", "down", "left", "right"],
+      distance: 1,
+      diagonalAllowed: false,
+      jumpAllowed: false,
+      occupiedCellAllowed: false
+    },
+    wallPlacement: {
+      edges: 2,
+      overlapAllowed: false,
+      crossingAllowed: false,
+      endpointConnectionAllowed: true,
+      tJunctionAllowed: true,
+      preservePathFor: ["left", "right"]
+    },
+    outcome: { maxPliesResult: "draw" },
     firstPlayer: config.firstPlayer,
     maxPlies: config.maxPlies,
     turnTimeoutMs: config.turnTimeoutMs,
