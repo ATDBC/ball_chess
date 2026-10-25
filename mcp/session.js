@@ -51,27 +51,41 @@ export class AgentSession {
   async ensureJoined() {
     this.requireBinding();
     if (this.joined) return;
-    if (!this.joining) {
-      this.joining = this.join(this.matchId, this.token).finally(() => {
-        this.joining = null;
-      });
-    }
-    await this.joining;
+    await this.join(this.matchId, this.token);
   }
 
   async join(matchId, token, name) {
-    if (this.matchId && (this.matchId !== matchId || this.token !== token)) {
+    const conflicts = () => this.matchId && (this.matchId !== matchId || this.token !== token);
+    if (this.joined && conflicts()) {
       throw new GameError("ALREADY_JOINED", "This MCP session is already bound to a match seat");
     }
-    const state = await this.request(`/api/matches/${matchId}/join`, {
+    if (this.joining) {
+      const state = await this.joining;
+      if (conflicts()) {
+        throw new GameError("ALREADY_JOINED", "This MCP session is already bound to a match seat");
+      }
+      return state;
+    }
+    if (conflicts()) {
+      throw new GameError("ALREADY_JOINED", "This MCP session is already bound to a match seat");
+    }
+
+    const attempt = this.request(`/api/matches/${matchId}/join`, {
       token,
       method: "POST",
       body: JSON.stringify({ name: name || "MCP agent", clientKind: "mcp" })
+    }).then((state) => {
+      this.matchId = matchId;
+      this.token = token;
+      this.joined = true;
+      return withAscii(state);
     });
-    this.matchId = matchId;
-    this.token = token;
-    this.joined = true;
-    return withAscii(state);
+    this.joining = attempt;
+    try {
+      return await attempt;
+    } finally {
+      if (this.joining === attempt) this.joining = null;
+    }
   }
 
   async getState() {

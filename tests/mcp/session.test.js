@@ -120,3 +120,29 @@ test("agent state compacts legal actions below the tool-result prune threshold",
   assert.deepEqual(projected.legalActions.walls.v[0], [1, 0]);
   assert.ok(Buffer.byteLength(JSON.stringify(projected)) < 8192);
 });
+
+test("concurrent joins cannot replace the first requested binding", async () => {
+  const requests = [];
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const fetchImpl = async (url, options = {}) => {
+    requests.push({ url, options });
+    await gate;
+    const matchId = new URL(url).pathname.split("/")[3];
+    return new Response(JSON.stringify({ ...PLAYER_STATE, matchId }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  };
+  const session = new AgentSession({ baseUrl: "http://127.0.0.1:7100", fetchImpl });
+
+  const first = session.join("m_first", "token_first", "First");
+  const second = session.join("m_second", "token_second", "Second");
+  release();
+
+  assert.equal((await first).matchId, "m_first");
+  await assert.rejects(second, (error) => error.code === "ALREADY_JOINED");
+  assert.equal(requests.length, 1);
+  assert.equal(session.matchId, "m_first");
+  assert.equal(session.token, "token_first");
+});
