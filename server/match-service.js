@@ -9,6 +9,7 @@ import {
   joinMatchRecord,
   restoreMatch,
   serializeMatch,
+  statusFor,
   submitMatchAction,
   toPublicState
 } from "./match-record.js";
@@ -108,7 +109,7 @@ export class MatchService extends EventEmitter {
   }
 
   publishUpdate(record) {
-    const payload = { matchId: record.id, state: toPublicState(record) };
+    const payload = { matchId: record.id, state: toPublicState(record, null, this.now()) };
     for (const listener of this.rawListeners("update")) {
       try {
         const pending = listener.call(this, payload);
@@ -125,7 +126,7 @@ export class MatchService extends EventEmitter {
     const old = this.timers.get(record.id);
     if (old) this.clearTimer(old);
     this.timers.delete(record.id);
-    if (record.status !== "playing" || record.turnDeadlineAt === null) return;
+    if (statusFor(record) !== "playing" || record.turnDeadlineAt === null) return;
     const delay = Math.max(0, record.turnDeadlineAt - this.now());
     const timer = this.setTimer(() => {
       this.expire(record.id, record.version).catch((error) => {
@@ -144,7 +145,7 @@ export class MatchService extends EventEmitter {
     const playerTokens = { left: makeToken(), right: makeToken() };
     const record = createMatchRecord({ id, adminToken, playerTokens, config, now: this.now() });
     await this.commit(record);
-    return { matchId: id, adminToken, playerTokens, state: toPublicState(record) };
+    return { matchId: id, adminToken, playerTokens, state: toPublicState(record, null, this.now()) };
   }
 
   join(id, token, profile = {}) {
@@ -153,7 +154,7 @@ export class MatchService extends EventEmitter {
       const seat = this.seatForToken(record, token);
       const candidate = joinMatchRecord(record, seat, normalizeProfile(profile), this.now());
       const current = candidate === record ? record : await this.commit(candidate);
-      return toPublicState(current, seat);
+      return toPublicState(current, seat, this.now());
     });
   }
 
@@ -162,11 +163,11 @@ export class MatchService extends EventEmitter {
     let record = this.requireMatch(id);
     const seat = token === undefined ? null : this.seatForToken(record, token);
     const now = this.now();
-    if (record.status === "playing" && record.turnDeadlineAt !== null && record.turnDeadlineAt <= now) {
+    if (statusFor(record) === "playing" && record.turnDeadlineAt !== null && record.turnDeadlineAt <= now) {
       await this.expire(id, record.version);
       record = this.requireMatch(id);
     }
-    return toPublicState(record, seat);
+    return toPublicState(record, seat, now);
   }
 
   submitAction(id, token, expectedVersion, action) {
@@ -179,7 +180,7 @@ export class MatchService extends EventEmitter {
       }
       const candidate = submitMatchAction(record, seat, expectedVersion, action, now);
       await this.commit(candidate);
-      return toPublicState(candidate, seat);
+      return toPublicState(candidate, seat, this.now());
     });
   }
 
@@ -192,7 +193,7 @@ export class MatchService extends EventEmitter {
   }
 
   async expireIfDue(record, now = this.now()) {
-    if (record.status !== "playing" || record.turnDeadlineAt === null || record.turnDeadlineAt > now) return record;
+    if (statusFor(record) !== "playing" || record.turnDeadlineAt === null || record.turnDeadlineAt > now) return record;
     return this.commit(expireMatchRecord(record, now));
   }
 
@@ -225,7 +226,7 @@ export class MatchService extends EventEmitter {
       if (adminToken !== record.adminToken) throw new GameError("FORBIDDEN", "Administrator token is invalid");
       const candidate = abortMatchRecord(record, this.now());
       const current = candidate === record ? record : await this.commit(candidate);
-      return toPublicState(current);
+      return toPublicState(current, null, this.now());
     });
   }
 
