@@ -37,6 +37,27 @@ test("redeeming state reuses an id and is atomically replaced by bound state", a
   assert.equal(await store.read("agent-1"), null);
 });
 
+test("rejecting a redemption releases only the matching pending attempt", async () => {
+  const credentials = new MemoryCredentials();
+  const store = new BallChessGrantStore(credentials);
+  const first = await store.beginRedemption("agent-1", {
+    baseUrl: "http://127.0.0.1:7100",
+    inviteCode: "EXPIRED",
+    redemptionId: "a".repeat(32)
+  });
+
+  await store.rejectRedemption("agent-1", first.redemptionId);
+  assert.deepEqual(await store.read("agent-1"), { version: 1, state: "unbound" });
+
+  const next = await store.beginRedemption("agent-1", {
+    baseUrl: first.baseUrl,
+    inviteCode: "FRESH",
+    redemptionId: "b".repeat(32)
+  });
+  await store.rejectRedemption("agent-1", first.redemptionId);
+  assert.deepEqual(await store.read("agent-1"), next);
+});
+
 test("finishing atomically replaces the player token with a terminal receipt", async () => {
   const credentials = new MemoryCredentials();
   const store = new BallChessGrantStore(credentials);

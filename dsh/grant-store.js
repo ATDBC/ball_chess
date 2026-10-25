@@ -136,6 +136,10 @@ export function decodeGrant(record) {
   if (record === undefined) return null;
   if (!exactKeys(record, ["kind", "payload"]) || record.kind !== "grant") fail();
   const payload = record.payload;
+  if (payload?.state === "unbound") {
+    if (!exactKeys(payload, ["version", "state"]) || payload.version !== 1) fail();
+    return structuredClone(payload);
+  }
   if (payload?.state === "redeeming") {
     if (!exactKeys(payload, ["version", "state", "baseUrl", "inviteCode", "redemptionId"]) ||
         payload.version !== 1 || !nonempty(payload.baseUrl) || !nonempty(payload.inviteCode) ||
@@ -201,6 +205,16 @@ export class BallChessGrantStore {
         throw Object.assign(new Error("The pending invitation redemption changed"), { code: "REDEMPTION_CHANGED" });
       }
       return { kind: "grant", payload: { version: 1, state: "bound", ...binding } };
+    });
+    return decodeGrant(record);
+  }
+
+  async rejectRedemption(agentId, redemptionId) {
+    const key = credentialKeyForAgent(agentId);
+    const record = await this.credentials.modifyRecord(key, async (current) => {
+      const grant = decodeGrant(current);
+      if (grant?.state !== "redeeming" || grant.redemptionId !== redemptionId) return undefined;
+      return { kind: "grant", payload: { version: 1, state: "unbound" } };
     });
     return decodeGrant(record);
   }

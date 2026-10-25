@@ -73,6 +73,60 @@ test("join persists a bound grant while rendered output hides invitation and tok
   });
 });
 
+test("an authoritative invitation rejection releases the pending grant for a new code", async () => {
+  const credentials = new MemoryCredentials();
+  const harness = context(credentials);
+  let expired = true;
+  const fetchImpl = async (url) => {
+    if (url.endsWith("/redeem") && expired) {
+      expired = false;
+      return new Response(JSON.stringify({
+        ok: false,
+        error: { code: "INVITE_EXPIRED", message: "Invitation code has expired", details: {} }
+      }), { status: 409 });
+    }
+    if (url.endsWith("/redeem")) {
+      return new Response(JSON.stringify({ matchId: "m_one", seat: "left", playerToken: "seat_secret", state: WAITING }), { status: 200 });
+    }
+    if (url.endsWith("/ready")) return new Response(JSON.stringify(WAITING), { status: 200 });
+    throw new Error(`unexpected request: ${url}`);
+  };
+  let redemption = 0;
+  createBallChessPlugin({ fetchImpl, redemptionIdFactory: () => (++redemption).toString(16).padStart(32, "0") })
+    .apply(harness.ctx, { baseUrl: "http://127.0.0.1:7100" });
+  const join = harness.definitions.get("join_by_invite");
+
+  await assert.rejects(
+    join.execute({ code: "01234-56789-ABCDE-FGHJK-MNPQRS" }, exec()),
+    (error) => error.code === "INVITE_EXPIRED"
+  );
+  assert.deepEqual(await credentials.readRecord(credentialKeyForAgent("agent-1")), {
+    kind: "grant",
+    payload: { version: 1, state: "unbound" }
+  });
+
+  const joined = await join.execute({ code: "11234-56789-ABCDE-FGHJK-MNPQRS" }, exec());
+  assert.equal(joined.kind, "waiting");
+  assert.equal((await credentials.readRecord(credentialKeyForAgent("agent-1"))).payload.state, "bound");
+});
+
+test("an ambiguous invitation failure keeps the pending grant for idempotent recovery", async () => {
+  const credentials = new MemoryCredentials();
+  const harness = context(credentials);
+  createBallChessPlugin({
+    fetchImpl: async () => { throw new TypeError("connection lost"); },
+    redemptionIdFactory: () => "a".repeat(32)
+  }).apply(harness.ctx, { baseUrl: "http://127.0.0.1:7100" });
+  const join = harness.definitions.get("join_by_invite");
+
+  await assert.rejects(join.execute({ code: "01234-56789-ABCDE-FGHJK-MNPQRS" }, exec()), /connection lost/);
+  assert.equal((await credentials.readRecord(credentialKeyForAgent("agent-1"))).payload.state, "redeeming");
+  await assert.rejects(
+    join.execute({ code: "11234-56789-ABCDE-FGHJK-MNPQRS" }, exec()),
+    (error) => error.code === "REDEMPTION_IN_PROGRESS"
+  );
+});
+
 test("cold resume replaces the token with a recoverable terminal receipt", async () => {
   const credentials = new MemoryCredentials();
   credentials.records.set(credentialKeyForAgent("agent-1"), {

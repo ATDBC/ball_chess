@@ -32,7 +32,7 @@ Create a conversation with the **Ball Chess player** preset and send:
 ## Session and credential behavior
 
 - A binding belongs to the current DSH Agent ID. Another conversation has another credential key and can control the other seat.
-- The credential record is `ball-chess/s-<sha256(agentId)>`. It stores a pending redemption before the HTTP request and replaces it with the bound seat after success.
+- The credential record is `ball-chess/s-<sha256(agentId)>`. It stores a pending redemption before the HTTP request and replaces it with the bound seat after success. A definitive server rejection replaces that pending record with an unbound marker so another invitation can be used; transport and server failures with an unknown outcome retain it for an idempotent retry.
 - An interrupted redemption reuses its stored redemption ID. A normal bound resume reconstructs the client when the user asks the conversation to continue.
 - Forks and subagents do not inherit the parent seat. Canceling or archiving a wait closes the SSE request but retains the binding.
 - Observing a finished match atomically replaces the bound player token with a non-secret terminal receipt. A restart before the model reports the result can replay that receipt without network access. The token is never a tool argument, tool result, model-facing string, public match state, or ordinary plugin log field.

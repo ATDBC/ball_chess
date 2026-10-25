@@ -9,6 +9,16 @@ import { BallChessGrantStore, inheritedSession } from "./grant-store.js";
 export const name = "ball-chess-dsh";
 export const inject = ["tools", "credentials"];
 
+const DEFINITIVE_REDEMPTION_FAILURES = new Set([
+  "INVALID_REQUEST",
+  "INVITE_INVALID",
+  "INVITE_CONSUMED",
+  "INVITE_EXPIRED",
+  "MATCH_FINISHED",
+  "MATCH_ALREADY_STARTED",
+  "SEAT_NOT_OPEN"
+]);
+
 function validateBaseUrl(value) {
   let url;
   try { url = new URL(value); } catch { throw new TypeError("ball-chess-dsh baseUrl must be a valid URL"); }
@@ -64,6 +74,9 @@ export function createBallChessPlugin({ fetchImpl = fetch, redemptionIdFactory =
           }
           throw new GameError("NOT_JOINED", "Join a Ball Chess invitation in this DSH session first");
         }
+        if (grant.state === "unbound") {
+          throw new GameError("NOT_JOINED", "Join a Ball Chess invitation in this DSH session first");
+        }
         if (grant.state === "redeeming") {
           throw new GameError("REDEMPTION_PENDING", "Retry join_by_invite with the same invitation to resolve the pending redemption");
         }
@@ -96,7 +109,22 @@ export function createBallChessPlugin({ fetchImpl = fetch, redemptionIdFactory =
             cached = { signature, client: new BallChessAgentClient({ baseUrl: pending.baseUrl, fetchImpl, clientType: "dsh" }) };
             clients.set(agent.id, cached);
           }
-          await cached.client.bindByInvite({ code: pending.inviteCode, redemptionId: pending.redemptionId, name: args.name || "DSH agent" });
+          try {
+            await cached.client.bindByInvite({
+              code: pending.inviteCode,
+              redemptionId: pending.redemptionId,
+              name: args.name || "DSH agent"
+            });
+          } catch (error) {
+            if (DEFINITIVE_REDEMPTION_FAILURES.has(error?.code)) {
+              await grants.rejectRedemption(agent.id, pending.redemptionId);
+              if (clients.get(agent.id) === cached) {
+                cached.client.close();
+                clients.delete(agent.id);
+              }
+            }
+            throw error;
+          }
           const readyResult = await cached.client.setReady(true);
           const binding = cached.client.exportBinding();
           await grants.completeRedemption(agent.id, pending.redemptionId, { baseUrl: pending.baseUrl, ...binding });

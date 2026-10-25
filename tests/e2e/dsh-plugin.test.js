@@ -121,3 +121,46 @@ test("two DSH sessions play independently, resume cold, cancel waits, isolate fo
   assert.deepEqual(recoveredRight.state.result, recoveredLeft.state.result);
   offline.dispose();
 });
+
+test("an expired invitation does not block the same DSH session from joining with a fresh invitation", async (t) => {
+  await mkdir(path.join(process.cwd(), ".tmp"), { recursive: true });
+  const directory = await mkdtemp(path.join(process.cwd(), ".tmp", "dsh-expired-invite-"));
+  let now = 100;
+  const codes = [
+    "01234-56789-ABCDE-FGHJK-MNPQRS",
+    "11234-56789-ABCDE-FGHJK-MNPQRS"
+  ];
+  const service = await MatchService.open({
+    store: new MatchStore({ directory }),
+    now: () => now,
+    generateInvitationCode: () => codes.shift()
+  });
+  const server = createApp({ service, webRoot: path.resolve("web"), coreRoot: path.resolve("core") });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    const closed = new Promise((resolve) => server.once("close", resolve));
+    server.close();
+    server.closeAllConnections();
+    await closed;
+    service.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  const created = await service.create();
+  const expired = await service.createInvitation(created.matchId, created.adminToken, "left");
+  now = expired.expiresAt;
+  const credentials = new MemoryCredentials();
+  const harness = pluginHarness(credentials, baseUrl);
+  t.after(() => harness.dispose());
+  const join = harness.tools.get("join_by_invite");
+  const agent = execution("dsh-expired-invite");
+
+  await assert.rejects(join.execute({ code: expired.code }, agent), (error) => error.code === "INVITE_EXPIRED");
+  const fresh = await service.createInvitation(created.matchId, created.adminToken, "left");
+  const joined = await join.execute({ code: fresh.code }, agent);
+
+  assert.equal(joined.kind, "waiting");
+  assert.equal(joined.state.seats.left.phase, "ready");
+  assert.equal((await credentials.readRecord(credentialKeyForAgent("dsh-expired-invite"))).payload.state, "bound");
+});

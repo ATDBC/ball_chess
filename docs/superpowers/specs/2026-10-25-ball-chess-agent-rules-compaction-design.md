@@ -127,6 +127,8 @@ dsh plugin --profile web add E:\My_project\ball_chess
 
 persona 说明完整目标、行动流程和恢复原则，但不写死墙数量。它明确要求所有动态墙信息以工具返回的本局配置为准。
 
+邀请码兑换使用持久化状态机保证重试安全。发出兑换请求前先记录 `redeeming` 和稳定的 redemption ID；成功后原子替换为席位绑定。服务端明确拒绝邀请码（例如无效、过期、已使用、席位已关闭或对局已经开始/结束）时，必须把仍匹配该 redemption ID 的记录释放为 `unbound`，允许同一 Session 使用新邀请码。网络中断或服务器结果未知时保留 `redeeming`，仅允许用同一邀请码和 redemption ID 重试，避免一次成功但响应丢失后重复认领。迟到的失败回调不得清除更新的兑换或已完成绑定。
+
 ## 5. Ball Chess 专用压缩插件
 
 ### 5.1 结构
