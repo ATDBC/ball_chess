@@ -26,7 +26,6 @@ export function toAscii(state) {
   }
   return lines.join("\n");
 }
-
 export function projectState(state) {
   const projected = structuredClone(state);
   projected.ascii = toAscii(state);
@@ -40,14 +39,12 @@ export function projectState(state) {
   }
   return projected;
 }
-
 function legalText(legalActions) {
   if (!legalActions) return "";
   const horizontal = legalActions.walls.h.map(([x, y]) => `${x},${y}`).join(";");
   const vertical = legalActions.walls.v.map(([x, y]) => `${x},${y}`).join(";");
   return `moves=${legalActions.moves.join(",") || "-"} walls.h=${horizontal || "-"} walls.v=${vertical || "-"}`;
 }
-
 export function renderAgentResult(result) {
   const state = result.state;
   if (result.kind === "canceled") return "CANCELED: waiting stopped; the seat remains bound.";
@@ -64,4 +61,3 @@ export function renderAgentResult(result) {
   if (result.ok === false) lines.push(`ERROR ${result.error.code}: ${result.error.message}; refresh state and retry a listed action.`);
   return lines.join("\n");
 }
-

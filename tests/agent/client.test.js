@@ -37,7 +37,6 @@ test("invite binding is serialized, readies once, and hides credentials", async 
   assert.ok(!JSON.stringify(one).includes("seat_secret"));
   assert.ok(!JSON.stringify(one).includes("01234"));
 });
-
 test("bound client authenticates state and action without returning token", async () => {
   const calls = [];
   const playing = { ...waiting, version: 3, status: "playing", yourTurn: true, legalActions: [{ type: "move", direction: "up" }] };
@@ -52,7 +51,6 @@ test("bound client authenticates state and action without returning token", asyn
   assert.equal(action.ok, true);
   assert.ok(!JSON.stringify({ state, action }).includes("seat_secret"));
 });
-
 test("HTTP errors keep stable recovery fields without request secrets", async () => {
   const client = new BallChessAgentClient({
     baseUrl: "http://local.test",
@@ -65,4 +63,3 @@ test("HTTP errors keep stable recovery fields without request secrets", async ()
   assert.equal(result.state.version, 9);
   assert.ok(!JSON.stringify(result).includes("seat_secret"));
 });
-

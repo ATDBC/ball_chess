@@ -46,4 +46,3 @@
 - [ ] Run `node --test "tests/agent/*.test.js" "tests/mcp/*.test.js" tests/web/agent-instructions.test.js tests/e2e/bots.test.js`.
 - [ ] Run `npm.cmd test`, `node --check mcp/index.js`, and `git diff --check`.
 - [ ] Commit with `docs: describe invitation-first agent access`.
-

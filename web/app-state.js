@@ -17,7 +17,6 @@ export function createAppState() {
     ui: { actionMode: "move", wallOrientation: "h" }
   };
 }
-
 export function activateIdentity(state, identity) {
   return {
     ...createAppState(),
@@ -30,21 +29,18 @@ export function activateIdentity(state, identity) {
     ui: { ...state.ui }
   };
 }
-
 export function acceptSnapshot(state, snapshot, epoch) {
   if (epoch !== state.identity.epoch) return state;
   if (snapshot.matchId !== state.identity.matchId) return state;
   if (state.snapshot && snapshot.version < state.snapshot.version) return state;
   return { ...state, snapshot };
 }
-
 export function stageFor(state) {
   if (!state.identity.matchId) return "outside";
   if (state.snapshot?.status === "finished") return "finished";
   if (state.snapshot?.status === "playing") return "playing";
   return "waiting";
 }
-
 export function createRefreshCoordinator(load) {
   let inFlight = null;
   return {
@@ -57,4 +53,3 @@ export function createRefreshCoordinator(load) {
     }
   };
 }
-

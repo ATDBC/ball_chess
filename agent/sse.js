@@ -22,7 +22,6 @@ export async function* readSseData(stream, signal) {
     await reader.cancel().catch(() => {});
   }
 }
-
 export function abortableDelay(milliseconds, signal) {
   if (signal?.aborted) return Promise.resolve(false);
   return new Promise((resolve) => {
@@ -36,4 +35,3 @@ export function abortableDelay(milliseconds, signal) {
     signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
-

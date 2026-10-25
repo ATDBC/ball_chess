@@ -58,4 +58,3 @@
 - [ ] Run `npm.cmd test`, syntax checks for every new ESM entry, and `git diff --check`.
 - [ ] Update the approved design status and README with the final supported workflow.
 - [ ] Commit with `docs: describe dsh ball chess preset`.
-

@@ -65,4 +65,3 @@
 - [ ] Run `npm.cmd test`, `node --check web/app.js`, and `git diff --check`.
 - [ ] Manually smoke create → invite → redeem → ready → play → finish/review in two browser sessions.
 - [ ] Commit with `docs: describe task-oriented browser flow`.
-

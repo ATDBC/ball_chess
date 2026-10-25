@@ -34,4 +34,3 @@ test("MCP invitation join generates hidden idempotency and readies", async () =>
   assert.ok(!JSON.stringify(result).includes("seat_secret"));
   assert.ok(!JSON.stringify(result).includes("01234"));
 });
-

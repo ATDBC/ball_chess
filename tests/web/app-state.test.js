@@ -17,7 +17,6 @@ test("application state projects the four match stages", () => {
   assert.equal(stageFor(playing), "playing");
   assert.equal(stageFor(acceptSnapshot(playing, { matchId: "m_one", version: 3, status: "finished" }, playing.identity.epoch)), "finished");
 });
-
 test("obsolete identities and older snapshots cannot replace trusted state", () => {
   const first = activateIdentity(createAppState(), { matchId: "m_one", role: "spectator" });
   const trusted = acceptSnapshot(first, { matchId: "m_one", version: 4, status: "playing" }, first.identity.epoch);
@@ -25,7 +24,6 @@ test("obsolete identities and older snapshots cannot replace trusted state", () 
   const second = activateIdentity(trusted, { matchId: "m_two", role: "spectator" });
   assert.equal(acceptSnapshot(second, { matchId: "m_one", version: 9, status: "finished" }, first.identity.epoch), second);
 });
-
 test("refresh coordinator coalesces concurrent work and permits a later refresh", async () => {
   let calls = 0;
   let release;
@@ -44,4 +42,3 @@ test("refresh coordinator coalesces concurrent work and permits a later refresh"
   release();
   assert.equal(await third, 2);
 });
-

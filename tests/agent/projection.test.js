@@ -12,11 +12,9 @@ test("projection groups actions and never adds credentials", () => {
   assert.match(projected.ascii, /L/);
   assert.ok(!JSON.stringify(projected).includes("playerToken"));
 });
-
 test("agent text is compact and action-oriented", () => {
   const text = renderAgentResult({ kind: "turn", state: { matchId: "m_test", version: 4, status: "playing", yourPlayer: "left", yourTurn: true, ascii: "L R", legalActions: { moves: ["up"], walls: { h: [], v: [] } } } });
   assert.match(text, /TURN m_test v4 left/);
   assert.match(text, /moves=up/);
   assert.ok(text.length < 300);
 });
-
