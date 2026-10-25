@@ -65,7 +65,7 @@ test("invitation and record methods use task-oriented endpoints", async () => {
     }
   });
   await api.createInvitation("m_test", "admin_secret", "right");
-  await api.redeemInvitation({ inviteCode: "ABCDE-FGHIJ-KLMNP-QRSTU-VWXYZ0", redemptionId: "a".repeat(32), profile: { displayName: "Alice", clientType: "browser" } });
+  await api.redeemInvitation({ inviteCode: "01234-56789-ABCDE-FGHJK-MNPQRS", redemptionId: "a".repeat(32), profile: { displayName: "Alice", clientType: "browser" } });
   await api.record("m_test");
   assert.equal(calls[0].url, "/api/matches/m_test/invitations");
   assert.equal(calls[0].options.headers.authorization, "Bearer admin_secret");

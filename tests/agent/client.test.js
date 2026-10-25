@@ -26,8 +26,8 @@ test("invite binding is serialized, readies once, and hides credentials", async 
     throw new Error(`unexpected ${url}`);
   };
   const client = new BallChessAgentClient({ baseUrl: "http://local.test", fetchImpl });
-  const first = client.bindByInvite({ code: "ABCDE-FGHIJ-KLMNP-QRSTU-VWXYZ0", redemptionId: "a".repeat(32), name: "A", ready: true });
-  const second = client.bindByInvite({ code: "ABCDE-FGHIJ-KLMNP-QRSTU-VWXYZ0", redemptionId: "a".repeat(32), name: "A", ready: true });
+  const first = client.bindByInvite({ code: "01234-56789-ABCDE-FGHJK-MNPQRS", redemptionId: "a".repeat(32), name: "A", ready: true });
+  const second = client.bindByInvite({ code: "01234-56789-ABCDE-FGHJK-MNPQRS", redemptionId: "a".repeat(32), name: "A", ready: true });
   await Promise.resolve();
   assert.equal(calls.length, 1);
   release();
@@ -35,7 +35,7 @@ test("invite binding is serialized, readies once, and hides credentials", async 
   assert.deepEqual(one, two);
   assert.equal(calls.filter((call) => call.url.endsWith("/ready")).length, 1);
   assert.ok(!JSON.stringify(one).includes("seat_secret"));
-  assert.ok(!JSON.stringify(one).includes("ABCDE"));
+  assert.ok(!JSON.stringify(one).includes("01234"));
 });
 
 test("bound client authenticates state and action without returning token", async () => {

@@ -28,10 +28,10 @@ test("MCP invitation join generates hidden idempotency and readies", async () =>
       return new Response(JSON.stringify(STATE), { status: 200 });
     }
   });
-  const result = await session.joinByInvite("ABCDE-FGHIJ-KLMNP-QRSTU-VWXYZ0", "Agent");
+  const result = await session.joinByInvite("01234-56789-ABCDE-FGHJK-MNPQRS", "Agent");
   assert.match(bodies[0].redemptionId, /^[0-9a-f]{32}$/);
   assert.deepEqual(bodies[1], { ready: true });
   assert.ok(!JSON.stringify(result).includes("seat_secret"));
-  assert.ok(!JSON.stringify(result).includes("ABCDE"));
+  assert.ok(!JSON.stringify(result).includes("01234"));
 });
 

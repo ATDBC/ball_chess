@@ -25,7 +25,7 @@ test("agent setup contains only the requested seat credential", () => {
 });
 
 test("invitation prompt is the default agent handoff and contains no long-lived token", () => {
-  const prompt = buildInvitePrompt({ code: "ABCDE-FGHIJ-KLMNP-QRSTU-VWXYZ0" });
-  assert.equal(prompt, "加入邀请码 ABCDE-FGHIJ-KLMNP-QRSTU-VWXYZ0 并开始");
+  const prompt = buildInvitePrompt({ code: "01234-56789-ABCDE-FGHJK-MNPQRS" });
+  assert.equal(prompt, "加入邀请码 01234-56789-ABCDE-FGHJK-MNPQRS 并开始");
   assert.ok(!prompt.includes("playerToken"));
 });

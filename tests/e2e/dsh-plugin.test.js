@@ -1,0 +1,114 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import path from "node:path";
+import { MatchStore } from "../../server/store.js";
+import { MatchService } from "../../server/match-service.js";
+import { createApp } from "../../server/app.js";
+import { createBallChessPlugin } from "../../dsh/plugin.js";
+import { credentialKeyForAgent } from "../../dsh/grant-store.js";
+
+class MemoryCredentials {
+  records = new Map();
+  async readRecord(key) { return this.records.get(key); }
+  async modifyRecord(key, mutate) { const next = await mutate(this.records.get(key)); if (next !== undefined) this.records.set(key, next); return this.records.get(key); }
+  async deleteRecord(key) { this.records.delete(key); }
+}
+
+function pluginHarness(credentials, baseUrl) {
+  const tools = new Map();
+  const effects = [];
+  const ctx = {
+    credentials,
+    tools: { register(definition) { tools.set(definition.name, definition); return () => tools.delete(definition.name); } },
+    effect(callback) { const dispose = callback(); effects.push(dispose); return dispose; }
+  };
+  createBallChessPlugin().apply(ctx, { baseUrl });
+  return { tools, dispose: () => effects.splice(0).reverse().forEach((dispose) => dispose()) };
+}
+
+function execution(id, signal = new AbortController().signal, header = {}) {
+  return { agent: { id, session: { header } }, signal };
+}
+
+test("two DSH sessions play independently, resume cold, cancel waits, isolate forks, and erase finished grants", { timeout: 15000 }, async (t) => {
+  await mkdir(path.join(process.cwd(), ".tmp"), { recursive: true });
+  const directory = await mkdtemp(path.join(process.cwd(), ".tmp", "dsh-plugin-"));
+  const service = await MatchService.open({ store: new MatchStore({ directory }) });
+  const server = createApp({ service, webRoot: path.resolve("web"), coreRoot: path.resolve("core") });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    const closed = new Promise((resolve) => server.once("close", resolve));
+    server.close();
+    server.closeAllConnections();
+    await closed;
+    service.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  const created = await fetch(`${baseUrl}/api/matches`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ config: { maxPlies: 40 } })
+  }).then((response) => response.json());
+  const invitation = (seat) => fetch(`${baseUrl}/api/matches/${created.matchId}/invitations`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${created.adminToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ seat })
+  }).then((response) => response.json());
+  const leftInvite = await invitation("left");
+  const rightInvite = await invitation("right");
+
+  const credentials = new MemoryCredentials();
+  let harness = pluginHarness(credentials, baseUrl);
+  const leftExec = execution("dsh-left");
+  const rightExec = execution("dsh-right");
+  const joinedLeft = await harness.tools.get("join_by_invite").execute({ code: leftInvite.code }, leftExec);
+  const joinedRight = await harness.tools.get("join_by_invite").execute({ code: rightInvite.code }, rightExec);
+  for (const [definition, value, secret] of [
+    [harness.tools.get("join_by_invite"), joinedLeft, leftInvite.code],
+    [harness.tools.get("join_by_invite"), joinedRight, rightInvite.code]
+  ]) {
+    const text = definition.output.render({}, value)[0].text;
+    assert.ok(!text.includes(secret));
+    assert.ok(!text.includes("playerToken"));
+  }
+  assert.notDeepEqual(
+    credentials.records.get(credentialKeyForAgent("dsh-left")),
+    credentials.records.get(credentialKeyForAgent("dsh-right"))
+  );
+
+  const cancel = new AbortController();
+  const waiting = harness.tools.get("wait_for_turn").execute({}, execution("dsh-right", cancel.signal));
+  cancel.abort();
+  assert.equal((await waiting).kind, "canceled");
+  assert.ok(credentials.records.has(credentialKeyForAgent("dsh-right")));
+  await assert.rejects(
+    harness.tools.get("get_match_state").execute({}, execution("fork", undefined, { isSeeded: true, parentSession: "dsh-left" })),
+    (error) => error.code === "BINDING_NOT_INHERITED"
+  );
+
+  const opening = await harness.tools.get("get_match_state").execute({}, leftExec);
+  await harness.tools.get("submit_action").execute({ expectedVersion: opening.state.version, action: { type: "move", direction: "up" } }, leftExec);
+  assert.ok(credentials.records.has(credentialKeyForAgent("dsh-left")));
+  harness.dispose();
+  assert.ok(credentials.records.has(credentialKeyForAgent("dsh-left")));
+  harness = pluginHarness(credentials, baseUrl);
+  const resumed = await harness.tools.get("get_match_state").execute({}, rightExec);
+  assert.equal(resumed.state.players.left.position[1], 1);
+
+  for (let turn = 0; turn < 40; turn += 1) {
+    const left = await harness.tools.get("get_match_state").execute({}, leftExec);
+    if (left.state.status === "finished") break;
+    const currentExec = left.state.yourTurn ? leftExec : rightExec;
+    const current = left.state.yourTurn ? left : await harness.tools.get("get_match_state").execute({}, rightExec);
+    const next = await harness.tools.get("submit_action").execute({ expectedVersion: current.state.version, action: { type: "move", direction: "up" } }, currentExec);
+    if (next.kind === "finished") break;
+  }
+  const finalLeft = await harness.tools.get("get_match_state").execute({}, leftExec).catch((error) => ({ error }));
+  if (!finalLeft.error) assert.equal(finalLeft.kind, "finished");
+  const finalRight = await harness.tools.get("get_match_state").execute({}, rightExec).catch((error) => ({ error }));
+  if (!finalRight.error) assert.equal(finalRight.kind, "finished");
+  assert.equal(credentials.records.has(credentialKeyForAgent("dsh-left")), false);
+  assert.equal(credentials.records.has(credentialKeyForAgent("dsh-right")), false);
+  harness.dispose();
+});

@@ -1,0 +1,28 @@
+- insert:
+    - id: preset-ball-chess
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: ball-chess
+        name: Ball Chess player
+        description: Join one invited seat and play the match with only Ball Chess tools.
+        order: 5
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |-
+                你是 Ball Chess 对局参与者。用户给出邀请码并要求开始时，调用 join_by_invite；该工具会认领席位并发送准备。只根据工具返回的当前版本和合法行动决策。轮到自己时提交一个合法行动；尚未轮到自己时调用 wait_for_turn；版本冲突时重新读取状态。对局结束后简洁报告结果。不要索要、展示或猜测席位令牌。
+              complete: true
+              includeRuntimeContext: false
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+          - id: ball-chess-tools
+            name: 'E:/My_project/ball_chess/dsh/plugin.js'
+            config:
+              baseUrl: !!js process.env.BALL_CHESS_URL ?? 'http://127.0.0.1:7100'

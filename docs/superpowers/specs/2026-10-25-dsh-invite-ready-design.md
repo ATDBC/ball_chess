@@ -1,7 +1,7 @@
 # Ball Chess 席位、准备、前端流程与 DSH 接入设计
 
 - 日期：2026-10-25
-- 状态：已批准，阶段三至五实施中
+- 状态：阶段一至五已实现并验收
 - 目标记录版本：v2
 - 代码归属：`ball_chess` 仓库
 - DSH 集成：Ball Chess 专用 Cordis 插件与 Agent 预设
@@ -269,7 +269,7 @@ SSE 只负责通知“可能有更新”。刷新采用 single-flight；收到�
 
 | 工具 | 职责 |
 |---|---|
-| `join_by_invite` | 兑换当前 Agent 的席位邀请 |
+| `join_by_invite` | 兑换当前 Agent 的席位邀请并通过共享 ready 接口准备 |
 | `set_ready` | 在等待阶段准备或取消准备 |
 | `get_match_state` | 读取 ASCII 棋盘、席位和压缩行动信息 |
 | `wait_for_turn` | 等待可行动、结束、取消或致命错误 |
@@ -341,11 +341,10 @@ DSH 本地凭证服务防止秘密进入正常的模型与工具数据流，但�
 
 触发以下行为：
 
-1. 调用 `join_by_invite`；
-2. 调用 `set_ready({ ready: true })`；
-3. 调用 `wait_for_turn`；
-4. 轮到自己时依据最新状态选择一个行动并调用 `submit_action`；
-5. 重复等待和行动直到结束。
+1. 调用 `join_by_invite`，由宿主认领席位并发送 ready；
+2. 调用 `wait_for_turn`；
+3. 轮到自己时依据最新状态选择一个行动并调用 `submit_action`；
+4. 重复等待和行动直到结束。
 
 `STALE_STATE`、非法行动或超时后先读取响应携带的最新状态再决策，不能自动重放旧行动。对手尚未准备时只等待，不伪造“已开始”。
 

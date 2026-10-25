@@ -32,14 +32,14 @@ npm.cmd run dev
 
 ## 人类对局与观战
 
-1. 在“新建对局”中选择自己的席位，或选择“仅观战”；设置墙体、行动上限、回合超时和先手后创建。
-2. 创建者页面会显示每个席位的独立 MCP 配置与提示词。席位令牌只进入对应配置的子进程环境，不进入提示词；不要把管理员令牌当作玩家令牌使用。
-3. 另一名玩家在“加入或观战”中输入对局 ID 和自己的玩家令牌；只输入对局 ID、留空令牌即可观战。
-4. 玩家占席后点击“准备”；开局前可取消准备，双方都准备后才开始第一回合。
-5. 轮到你时选择“移动一球”或“放置挡板”。放墙模式可切换横/竖方向；等待对方和观战时操作锁定。
-6. 页面通过 SSE 接收权威快照，断线后会自动重连并重新拉取状态。服务重启后可根据持久化记录恢复。
+1. 在“开始一局”中选择自己的席位，或选择“仅管理/观战”；设置规则后创建。
+2. 等待阶段由管理员为空席生成邀请码。复制出的自然语言指令是“加入邀请码 … 并开始”，人类、MCP 和 DSH 使用同一种邀请。
+3. 另一名玩家在开始页输入邀请码；只读观战则输入对局 ID。`matchId + playerToken` 仅保留在折叠的高级兼容入口中。
+4. 玩家占席后点击“准备”；开局前可取消，双方都准备后才原子开始第一回合。
+5. 进行阶段只保留棋盘、行动方、计时、墙数和行动反馈。棋盘只有一个键盘焦点：方向键选择预览，`M` 切换移动/放墙，`R` 旋转墙，Enter 确认，Escape 取消；鼠标和触摸仍可直接选择。
+6. 结束阶段从 `/record` 读取完整权威棋谱，并提供“创建新对局”。SSE 只通知页面刷新；并发通知会合并为一次状态请求，旧版本或旧对局响应不能回滚界面。
 
-创建者浏览器保存对局 ID 与管理员令牌以恢复管理界面；直接加入者只保存自己的席位令牌。它们位于当前源的 `localStorage["ballChess.activeMatch"]`，请勿在不受信任的浏览器或共享账户中保留。
+浏览器只保存恢复当前身份所需的对局 ID、角色/席位和自己的凭证，不保存另一个席位的凭证。数据位于当前源的 `localStorage["ballChess.activeMatch.v2"]`，请勿在不受信任的浏览器或共享账户中保留。
 
 ## 程序 bot
 
@@ -84,7 +84,22 @@ node examples/bot.js --url http://127.0.0.1:7100 --match "$MATCH_ID" --token "$R
 
 ## MCP agent
 
-创建者从页面复制 MCP 配置，或按实际安装路径使用如下结构：
+推荐启动不预绑定的 MCP 进程，由 Agent 使用短期邀请码加入：
+
+```json
+{
+  "mcpServers": {
+    "ball-chess": {
+      "command": "node",
+      "args": ["E:\\My_project\\ball_chess\\mcp\\index.js", "--url", "http://127.0.0.1:7100"]
+    }
+  }
+}
+```
+
+通用进程提供 `join_by_invite`、`set_ready`、`get_match_state`、`wait_for_turn` 和 `submit_action`。`join_by_invite` 在宿主内部生成幂等兑换 ID，认领后通过 `/ready` 自动准备；工具参数和结果都没有玩家 token。`wait_for_turn` 通过 SSE 跨心跳和临时断线持续等待，只在轮到自己、终局或调用取消时返回。
+
+下面的预绑定形式仅用于测试、自动化和兼容恢复：
 
 ```json
 {
@@ -108,22 +123,33 @@ node examples/bot.js --url http://127.0.0.1:7100 --match "$MATCH_ID" --token "$R
 
 每个 agent 使用独立的 stdio 进程和独立席位令牌。配置不含管理员令牌，但包含所选席位令牌，因此必须按凭据保管。带 `--match` 启动时，适配器从 `BALL_CHESS_PLAYER_TOKEN` 取得令牌，在第一个状态、等待或行动调用前幂等加入；子进程重启后会以同一配置重新绑定。一个 MCP 进程只能绑定一个对局席位。
 
-预绑定进程向 agent 提供四个工具：
+预绑定进程隐藏 `join_by_invite`，向 Agent 提供四个工具：
 
 - `set_ready`：占席后发送或取消 ready；双方都发送 `ready: true` 后开始。
 - `get_match_state`：获取 JSON 状态、ASCII 棋盘与合法行动。
-- `wait_for_turn`：通过 SSE 等待自己回合或终局；单次等待最多 15 秒，等待超时不代表输棋。
+- `wait_for_turn`：通过 SSE 等待自己回合或终局；心跳和短暂重连不会制造一次新的模型轮次。
 - `submit_action`：携带最新 `expectedVersion` 提交一个 `legalActions` 中的行动；遇到 `STALE_STATE` 或 `ILLEGAL_ACTION` 时读取返回状态后重新选择。
 
-不带 `--match` 的通用 MCP 进程还提供 `join_match`，供需要在工具调用中手动绑定的客户端使用。加入后必须调用 `set_ready`，不要在 `status = waiting` 时尝试行动。MCP 状态把 HTTP 的完整行动对象压缩为 `legalActions.moves` 和按 `h`、`v` 分组的 `legalActions.walls` 锚点；提交时仍使用标准 `move` 或 `place_wall` 行动对象。
+MCP 与 DSH 直接复用 `agent/` 下同一个协议客户端。状态把 HTTP 的完整行动对象压缩为 `legalActions.moves` 和按 `h`、`v` 分组的 `legalActions.walls` 锚点；提交时仍使用标准 `move` 或 `place_wall` 行动对象。模型文本只含紧凑棋盘、版本和合法行动，结构化结果保留程序客户端所需状态。
 
 平台不会自动启动 Kimi、Claude、Codex 或其他第三方 agent，也不保存模型 API 密钥。自动测试验证了标准 MCP 与两个独立 stdio 测试客户端，不声称已逐一验证所有第三方厂商。
+
+## DSH Agent 预设
+
+`dsh/ball-chess.overlay.yml` 增加 **Ball Chess player** 预设。它只装配 Ball Chess 工具、专用 persona 和上下文压缩，不装配 shell、文件系统、浏览器、Web、工作流或 subagent 工具。先启动游戏服务，再从 DSH 源码目录运行：
+
+```powershell
+$env:BALL_CHESS_URL = 'http://127.0.0.1:7100'
+pnpm.cmd dsh web --patch E:\My_project\ball_chess\dsh\ball-chess.overlay.yml
+```
+
+新建对话时选择该预设，输入“加入邀请码 … 并开始”。每个 DSH Agent ID 对应独立 credentials 记录；同一会话可在重启后由用户输入“继续对局”恢复，fork/subagent 不继承席位，等待取消保留绑定，观察到终局后删除玩家 token。详细说明见 [`dsh/README.md`](dsh/README.md)。
 
 ## 持久化与安全边界
 
 - 真实对局写入 `data/matches/<matchId>.json`，采用临时文件加原子替换；测试只使用已忽略的 `.tmp/`。
 - 持久化文件包含私密令牌，**不要分享该目录**。`GET /record` 导出的棋谱会移除玩家和管理员令牌。
-- 页面生成的预绑定 MCP 配置包含一个席位令牌；不要把该配置粘贴到模型消息、会话记录或公共日志中。
+- 预绑定 MCP 配置包含一个席位令牌；不要把该配置粘贴到模型消息、会话记录或公共日志中。邀请优先的 MCP 与 DSH 流程不会把长期 token 放入工具参数或模型文本。
 - 回合计时按持久化截止时间恢复。载入时会校验记录字段并重放全部行动；字段、版本、状态、截止时间或结果互相矛盾的记录会被隔离且不会自动覆盖。
 - 新建和后续写入使用持久化记录 v2：保存席位阶段、`startedAt` 和邀请码消费回执，不保存可推导的对局状态。合法 v1 记录会先严格校验和重放，再在内存迁移；仅加载不会改写原文件，下一次权威变更才写成 v2。
 - 默认仅绑定本机回环地址，不开放 CORS，也不承诺公网部署安全。显式修改监听地址不等于完成公网加固。
@@ -137,4 +163,4 @@ node --check mcp/index.js
 node --check web/app.js
 ```
 
-测试覆盖规则、墙体与路径、全部终局、并发版本、原子存储、恢复、HTTP/SSE、双 bot 对战、双 MCP stdio 客户端，以及 SVG 几何和浏览器纯模块。
+测试覆盖规则、墙体与路径、全部终局、并发版本、原子存储、恢复、HTTP/SSE、双 bot 对战、双 MCP stdio 客户端、双 DSH Session、凭证恢复/隔离/清理，以及 SVG 几何、浏览器状态机和真实浏览器主流程。
