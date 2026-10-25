@@ -4,6 +4,8 @@ import { buildAgentPrompt, buildMcpConfig } from "../../web/agent-instructions.j
 
 test("agent setup contains only the requested seat credential", () => {
   const prompt = buildAgentPrompt({ matchId: "m_test", seat: "left" });
+  assert.ok(prompt.includes("set_ready"));
+  assert.ok(prompt.indexOf("set_ready") < prompt.indexOf("wait_for_turn"));
   assert.ok(prompt.includes("wait_for_turn"));
   assert.ok(prompt.includes("left"));
   assert.ok(!prompt.includes("left_secret"));
