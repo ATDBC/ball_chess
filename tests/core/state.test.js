@@ -21,3 +21,11 @@ test("configuration accepts finite walls and rejects invalid values", () => {
   assert.throws(() => normalizeConfig({ turnTimeoutMs: 0 }), /turnTimeoutMs/);
   assert.throws(() => normalizeConfig({ firstPlayer: "random" }), /firstPlayer/);
 });
+
+test("turn timeout fits the Node timer range", () => {
+  assert.equal(normalizeConfig({ turnTimeoutMs: 2_147_483_647 }).turnTimeoutMs, 2_147_483_647);
+  assert.throws(
+    () => normalizeConfig({ turnTimeoutMs: 2_147_483_648 }),
+    (error) => error.code === "INVALID_CONFIG" && /2147483647/.test(error.message)
+  );
+});

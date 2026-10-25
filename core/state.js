@@ -1,4 +1,4 @@
-import { DEFAULT_CONFIG, PLAYER_IDS, START_POSITIONS } from "./constants.js";
+import { DEFAULT_CONFIG, MAX_TURN_TIMEOUT_MS, PLAYER_IDS, START_POSITIONS } from "./constants.js";
 import { GameError } from "./errors.js";
 
 export function normalizeConfig(options = {}) {
@@ -9,8 +9,15 @@ export function normalizeConfig(options = {}) {
   if (!Number.isInteger(config.maxPlies) || config.maxPlies < 1) {
     throw new GameError("INVALID_CONFIG", "maxPlies must be a positive integer");
   }
-  if (!(config.turnTimeoutMs === null || (Number.isInteger(config.turnTimeoutMs) && config.turnTimeoutMs > 0))) {
-    throw new GameError("INVALID_CONFIG", "turnTimeoutMs must be null or a positive integer");
+  if (!(config.turnTimeoutMs === null || (
+    Number.isInteger(config.turnTimeoutMs)
+    && config.turnTimeoutMs > 0
+    && config.turnTimeoutMs <= MAX_TURN_TIMEOUT_MS
+  ))) {
+    throw new GameError(
+      "INVALID_CONFIG",
+      `turnTimeoutMs must be null or an integer from 1 to ${MAX_TURN_TIMEOUT_MS}`
+    );
   }
   if (!PLAYER_IDS.includes(config.firstPlayer)) {
     throw new GameError("INVALID_CONFIG", "firstPlayer must be left or right");
