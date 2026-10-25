@@ -11,4 +11,8 @@ test("page owns controls by outside, waiting, playing, and finished stages", asy
   assert.match(html, /id="spectate-id"/);
   assert.match(html, /<details[^>]*id="compatibility-join"/);
   assert.match(html, /id="finished-record"/);
+  assert.match(html, /id="rules-panel"/);
+  const source = await readFile(new URL("../../web/app.js", import.meta.url), "utf8");
+  assert.match(source, /rulePanelLines/);
+  assert.match(source, /rules-panel/);
 });

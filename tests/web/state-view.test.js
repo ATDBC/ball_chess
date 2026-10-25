@@ -4,10 +4,32 @@ import {
   shouldAcceptSnapshot,
   canInteract,
   nextReadyValue,
+  rulePanelLines,
   resolveInteractionMode,
   seatPhaseText,
   wallsRemaining
 } from "../../web/state-view.js";
+
+test("rule panel follows finite and unlimited wall settings", () => {
+  const base = {
+    config: {
+      width: 9,
+      height: 13,
+      firstPlayer: "left",
+      maxPlies: 300,
+      turnTimeoutMs: null,
+      wallLimit: 5
+    },
+    players: { left: { wallsUsed: 2 }, right: { wallsUsed: 1 } }
+  };
+  assert.deepEqual(rulePanelLines(base), [
+    "棋盘 9×13；双方目标均为到达 y=12",
+    "每回合正交移动一格，或放置一堵不封死任一方路径的两边墙",
+    "先手：左方；最多 300 手；不限时",
+    "墙：每方 5 堵；左方剩余 3，右方剩余 4"
+  ]);
+  assert.equal(rulePanelLines({ ...base, config: { ...base.config, wallLimit: null } })[3], "墙：无限；左方已用 2，右方已用 1");
+});
 
 test("snapshots cannot roll the board backward", () => {
   assert.equal(shouldAcceptSnapshot({ version: 4 }, { version: 3 }), false);

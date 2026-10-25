@@ -95,6 +95,8 @@ button.danger { color: var(--red-dark); }
 .code-block { max-height: 150px; overflow: auto; margin: 0; padding: 10px; border: 1px solid var(--grid); border-radius: 8px; background: #edf1ed; color: #4f5b55; font: 10px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .prompt-block { max-height: 110px; }
 .supporting-copy { margin: 0 0 12px; color: #69746f; font-size: 12px; line-height: 1.55; }
+.rules-list { display: grid; gap: 8px; margin: 0; padding-left: 18px; color: #69746f; font-size: 11px; line-height: 1.55; }
+.rules-list li::marker { color: #9aa49f; }
 .section-divider { display: flex; align-items: center; gap: 10px; margin: 18px 0; color: #89938e; font-size: 10px; }
 .section-divider::before, .section-divider::after { content: ""; flex: 1; height: 1px; background: var(--grid); }
 .advanced { margin-top: 16px; color: #69746f; font-size: 11px; }

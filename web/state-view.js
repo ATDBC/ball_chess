@@ -1,3 +1,5 @@
+import { describeMatchRules, describeWallBudgets } from "../core/rule-description.js";
+
 export function shouldAcceptSnapshot(current, incoming) {
   return !current || incoming.version >= current.version;
 }
@@ -23,6 +25,22 @@ export function seatPhaseText(phase) {
 export function wallsRemaining(state, seat) {
   if (state.config.wallLimit === null) return "∞";
   return String(Math.max(0, state.config.wallLimit - state.players[seat].wallsUsed));
+}
+
+export function rulePanelLines(state) {
+  const rules = describeMatchRules(state.config);
+  const walls = describeWallBudgets(state);
+  const first = rules.firstPlayer === "left" ? "左方" : "右方";
+  const timing = rules.turnTimeoutMs === null ? "不限时" : `每回合 ${rules.turnTimeoutMs / 1000} 秒`;
+  const wallLine = walls.mode === "unlimited"
+    ? `墙：无限；左方已用 ${walls.left.used}，右方已用 ${walls.right.used}`
+    : `墙：每方 ${walls.limit} 堵；左方剩余 ${walls.left.remaining}，右方剩余 ${walls.right.remaining}`;
+  return [
+    `棋盘 ${rules.board.width}×${rules.board.height}；双方目标均为到达 y=${rules.goals.left}`,
+    "每回合正交移动一格，或放置一堵不封死任一方路径的两边墙",
+    `先手：${first}；最多 ${rules.maxPlies} 手；${timing}`,
+    wallLine
+  ];
 }
 
 export function resolveInteractionMode(state, mode, actionPending) {

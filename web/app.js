@@ -1,7 +1,7 @@
 import { MatchApi } from "./api.js";
 import { acceptSnapshot, activateIdentity, createAppState, createRefreshCoordinator, stageFor } from "./app-state.js";
 import { renderBoard } from "./board.js";
-import { canInteract, nextReadyValue, resolveInteractionMode, seatPhaseText, wallsRemaining } from "./state-view.js";
+import { canInteract, nextReadyValue, resolveInteractionMode, rulePanelLines, seatPhaseText, wallsRemaining } from "./state-view.js";
 
 const api = new MatchApi({ baseUrl: "", eventSourceFactory: (url) => new EventSource(url) });
 const byId = (id) => document.getElementById(id);
@@ -105,6 +105,13 @@ function renderAll() {
   byId("identity-summary").textContent = appState.identity.role === "player"
     ? `你控制${SEAT_NAMES[appState.identity.seat] || "一个席位"}。双方准备后自动开始。`
     : appState.identity.role === "admin" ? "你正在管理并观战此对局。" : "你正在观战。";
+
+  byId("rules-section").hidden = !snapshot;
+  byId("rules-panel").replaceChildren(...(snapshot ? rulePanelLines(snapshot).map((text) => {
+    const item = document.createElement("li");
+    item.textContent = text;
+    return item;
+  }) : []));
 
   if (!snapshot) {
     byId("ready-toggle").hidden = true;
