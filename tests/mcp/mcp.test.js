@@ -52,50 +52,55 @@ test("pre-bound stdio MCP clients recover their seats after process replacement"
   const created = await fetch(`${baseUrl}/api/matches`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ maxPlies: 40 })
+    body: JSON.stringify({ config: { maxPlies: 40 } })
+  }).then((response) => response.json());
+  const setup = await fetch(`${baseUrl}/api/matches/${created.matchId}/setup`, {
+    headers: { authorization: `Bearer ${created.adminToken}` }
   }).then((response) => response.json());
   const manual = await connectClient("test-manual", []);
   const manualTools = await manual.listTools();
   assert.deepEqual(manualTools.tools.map((tool) => tool.name), [
-    "join_match", "get_match_state", "wait_for_turn", "submit_action"
+    "join_match", "set_ready", "get_match_state", "wait_for_turn", "submit_action"
   ]);
   await manual.callTool({
     name: "join_match",
-    arguments: { matchId: created.matchId, playerToken: created.playerTokens.left }
+    arguments: { matchId: created.matchId, playerToken: setup.playerTokens.left }
   });
   const manualState = await manual.callTool({ name: "get_match_state", arguments: {} });
   assert.equal(manualState.structuredContent.yourPlayer, "left");
   await manual.close();
-  const left = await connectAgent("test-left", created.matchId, created.playerTokens.left);
-  let right = await connectAgent("test-right", created.matchId, created.playerTokens.right);
+  const left = await connectAgent("test-left", created.matchId, setup.playerTokens.left);
+  let right = await connectAgent("test-right", created.matchId, setup.playerTokens.right);
   const listed = await left.listTools();
-  assert.deepEqual(listed.tools.map((tool) => tool.name), ["get_match_state", "wait_for_turn", "submit_action"]);
+  assert.deepEqual(listed.tools.map((tool) => tool.name), ["set_ready", "get_match_state", "wait_for_turn", "submit_action"]);
+  await left.callTool({ name: "set_ready", arguments: { ready: true } });
+  await right.callTool({ name: "set_ready", arguments: { ready: true } });
   const waitingState = await right.callTool({ name: "get_match_state", arguments: {} });
   assert.equal(waitingState.structuredContent.status, "playing");
   assert.equal(waitingState.structuredContent.yourTurn, false);
   const waiting = right.callTool({ name: "wait_for_turn", arguments: { timeoutSeconds: 3 } });
   const played = await left.callTool({
     name: "submit_action",
-    arguments: { expectedVersion: 2, action: { type: "move", direction: "up" } }
+    arguments: { expectedVersion: 4, action: { type: "move", direction: "up" } }
   });
   assert.equal(played.structuredContent.ok, true);
   const awakened = await waiting;
   assert.equal(awakened.structuredContent.waiting, false);
   assert.equal(awakened.structuredContent.state.yourTurn, true);
   await right.close();
-  right = await connectAgent("test-right-reconnected", created.matchId, created.playerTokens.right);
+  right = await connectAgent("test-right-reconnected", created.matchId, setup.playerTokens.right);
   const viewed = await right.callTool({ name: "get_match_state", arguments: {} });
   assert.equal(viewed.structuredContent.yourPlayer, "right");
   assert.deepEqual(viewed.structuredContent.players.left.position, [2, 1]);
   assert.ok(viewed.structuredContent.ascii.includes("L"));
   const rejected = await right.callTool({
     name: "submit_action",
-    arguments: { expectedVersion: 2, action: { type: "move", direction: "up" } }
+    arguments: { expectedVersion: 4, action: { type: "move", direction: "up" } }
   });
   assert.equal(rejected.structuredContent.ok, false);
   assert.equal(rejected.structuredContent.state.plies, 1);
 
-  for (let expectedVersion = 3; expectedVersion <= 40; expectedVersion += 1) {
+  for (let expectedVersion = 5; expectedVersion <= 42; expectedVersion += 1) {
     const agent = expectedVersion % 2 === 0 ? left : right;
     const current = await agent.callTool({ name: "get_match_state", arguments: {} });
     if (current.structuredContent.status === "finished") break;

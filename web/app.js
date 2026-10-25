@@ -1,7 +1,14 @@
 import { MatchApi } from "./api.js";
 import { renderBoard } from "./board.js";
 import { buildAgentPrompt, buildMcpConfig } from "./agent-instructions.js";
-import { canInteract, resolveInteractionMode, shouldAcceptSnapshot, wallsRemaining } from "./state-view.js";
+import {
+  canInteract,
+  nextReadyValue,
+  resolveInteractionMode,
+  seatPhaseText,
+  shouldAcceptSnapshot,
+  wallsRemaining
+} from "./state-view.js";
 
 const api = new MatchApi({ baseUrl: "", eventSourceFactory: (url) => new EventSource(url) });
 const byId = (id) => document.getElementById(id);
@@ -22,6 +29,7 @@ let currentState = null;
 let interactionMode = "move";
 let wallOrientation = "h";
 let actionPending = false;
+let readyPending = false;
 let eventSource = null;
 let connectionState = "live";
 let refreshFailed = false;
@@ -92,8 +100,10 @@ function resultText(result) {
 function renderStatus(state) {
   const connection = connectionState === "reconnecting" ? " · 正在重连" : "";
   if (state.status === "waiting") {
-    const joined = Number(state.seats.left.joined) + Number(state.seats.right.joined);
-    statusElement.textContent = `等待双方加入 · ${joined}/2${connection}`;
+    const phases = [state.seats.left.phase, state.seats.right.phase];
+    const joined = phases.filter((phase) => phase !== "open").length;
+    const ready = phases.filter((phase) => phase === "ready").length;
+    statusElement.textContent = `等待双方准备 · 已加入 ${joined}/2 · 已准备 ${ready}/2${connection}`;
   } else if (state.status === "finished") {
     statusElement.textContent = `对局结束 · 共 ${state.plies} 手${connection}`;
   } else {
@@ -109,8 +119,8 @@ function renderSidebar(state) {
   byId("right-walls").textContent = wallsRemaining(state, "right");
   byId("left-status").classList.toggle("active", state.status === "playing" && state.currentPlayer === "left");
   byId("right-status").classList.toggle("active", state.status === "playing" && state.currentPlayer === "right");
-  byId("left-status").title = state.seats.left.joined ? "左侧已加入" : "左侧等待加入";
-  byId("right-status").title = state.seats.right.joined ? "右侧已加入" : "右侧等待加入";
+  byId("left-status").title = `左侧${seatPhaseText(state.seats.left.phase)}`;
+  byId("right-status").title = `右侧${seatPhaseText(state.seats.right.phase)}`;
   renderActionLog();
 }
 
@@ -143,6 +153,11 @@ function renderControls(state) {
   byId("mode-wall").classList.toggle("active", interactionMode === "wall");
   byId("mode-move").setAttribute("aria-pressed", String(interactionMode === "move"));
   byId("mode-wall").setAttribute("aria-pressed", String(interactionMode === "wall"));
+  const readyValue = nextReadyValue(state);
+  const readyButton = byId("ready-toggle");
+  readyButton.hidden = readyValue === null;
+  readyButton.disabled = readyValue === null || readyPending;
+  readyButton.textContent = readyValue === false ? "取消准备" : "准备";
 }
 
 function renderAll() {
@@ -249,7 +264,10 @@ async function activateMatch(credentials, { persist = true } = {}) {
     }
   }
   if (activePlayerToken) {
-    const joined = await api.join(activeMatchId, activePlayerToken, { name: "浏览器玩家", clientKind: "browser" });
+    const joined = await api.join(activeMatchId, activePlayerToken, {
+      displayName: "浏览器玩家",
+      clientType: "browser"
+    });
     acceptState(joined);
   }
   if (persist) saveSession();
@@ -291,13 +309,28 @@ byId("create-form").addEventListener("submit", async (event) => {
   showError("");
   try {
     const timeoutSeconds = byId("turn-timeout").value;
-    const created = await api.create({
+    const config = {
       wallLimit: byId("wall-mode").value === "finite" ? Number(byId("wall-limit").value) : null,
       maxPlies: Number(byId("max-plies").value),
       turnTimeoutMs: timeoutSeconds ? Number(timeoutSeconds) * 1000 : null,
       firstPlayer: byId("first-player").value
+    };
+    const seat = byId("seat").value;
+    const created = await api.create({
+      config,
+      ...(seat === "spectate" ? {} : {
+        claim: {
+          seat,
+          profile: { displayName: "浏览器玩家", clientType: "browser" }
+        }
+      })
     });
-    await activateMatch({ matchId: created.matchId, adminToken: created.adminToken, seat: byId("seat").value });
+    await activateMatch({
+      matchId: created.matchId,
+      adminToken: created.adminToken,
+      playerToken: created.playerToken,
+      seat
+    });
   } catch (error) {
     showError(error.message);
   } finally {
@@ -333,6 +366,23 @@ byId("wall-orientation").addEventListener("change", (event) => {
   renderAll();
 });
 byId("agent-seat").addEventListener("change", renderAgentSetup);
+byId("ready-toggle").addEventListener("click", async () => {
+  const ready = nextReadyValue(currentState);
+  if (ready === null || !activeMatchId || !activePlayerToken || readyPending) return;
+  readyPending = true;
+  showError("");
+  renderControls(currentState);
+  try {
+    acceptState(await api.ready(activeMatchId, activePlayerToken, ready));
+  } catch (error) {
+    showError(error.message);
+    if (error.state) acceptState(error.state);
+  } finally {
+    readyPending = false;
+    await refreshState();
+    renderAll();
+  }
+});
 
 async function copyText(text, button) {
   try {

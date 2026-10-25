@@ -73,7 +73,7 @@ export class AgentSession {
     const attempt = this.request(`/api/matches/${matchId}/join`, {
       token,
       method: "POST",
-      body: JSON.stringify({ name: name || "MCP agent", clientKind: "mcp" })
+      body: JSON.stringify({ displayName: name || "MCP agent", clientType: "mcp" })
     }).then((state) => {
       this.matchId = matchId;
       this.token = token;
@@ -86,6 +86,14 @@ export class AgentSession {
     } finally {
       if (this.joining === attempt) this.joining = null;
     }
+  }
+
+  async setReady(ready) {
+    await this.ensureJoined();
+    return withAscii(await this.request(`/api/matches/${this.matchId}/ready`, {
+      method: "POST",
+      body: JSON.stringify({ ready })
+    }));
   }
 
   async getState() {

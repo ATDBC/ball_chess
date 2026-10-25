@@ -10,7 +10,14 @@ export async function runBot({ baseUrl, matchId, token, strategy = "greedy", see
     if (!response.ok) throw Object.assign(new Error(body.error.message), { code: body.error.code, state: body.state });
     return body;
   };
-  await request(`/api/matches/${matchId}/join`, { method: "POST", body: JSON.stringify({ clientKind: "bot", name: strategy }) });
+  await request(`/api/matches/${matchId}/join`, {
+    method: "POST",
+    body: JSON.stringify({ clientType: "bot", displayName: strategy })
+  });
+  await request(`/api/matches/${matchId}/ready`, {
+    method: "POST",
+    body: JSON.stringify({ ready: true })
+  });
   let randomState = seed >>> 0;
   const random = () => ((randomState = (1664525 * randomState + 1013904223) >>> 0) / 0x100000000);
   for (;;) {

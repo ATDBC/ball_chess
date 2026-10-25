@@ -21,6 +21,16 @@ export const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: "set_ready",
+    description: "Set or cancel readiness before the match starts",
+    inputSchema: {
+      type: "object",
+      required: ["ready"],
+      properties: { ready: { type: "boolean" } },
+      additionalProperties: false
+    }
+  },
+  {
     name: "get_match_state",
     description: "Get JSON state, ASCII board and legal actions",
     inputSchema: { type: "object", properties: {}, additionalProperties: false }
@@ -88,6 +98,9 @@ export async function handleTool(name, args, session) {
   switch (name) {
     case "join_match":
       result = { ok: true, state: await session.join(args.matchId, args.playerToken, args.name) };
+      break;
+    case "set_ready":
+      result = { ok: true, state: await session.setReady(args.ready) };
       break;
     case "get_match_state":
       result = await session.getState();

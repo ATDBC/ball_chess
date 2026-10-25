@@ -26,14 +26,20 @@ test("greedy and random clients finish one authoritative HTTP match", { timeout:
   const created = await fetch(`${baseUrl}/api/matches`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ maxPlies: 40 })
+    body: JSON.stringify({ config: { maxPlies: 40 } })
   }).then(async (response) => {
     assert.equal(response.status, 201);
     return response.json();
   });
+  const setup = await fetch(`${baseUrl}/api/matches/${created.matchId}/setup`, {
+    headers: { authorization: `Bearer ${created.adminToken}` }
+  }).then(async (response) => {
+    assert.equal(response.status, 200);
+    return response.json();
+  });
   const [leftResult, rightResult] = await Promise.all([
-    runBot({ baseUrl, matchId: created.matchId, token: created.playerTokens.left, strategy: "greedy", seed: 1, pollMs: 5 }),
-    runBot({ baseUrl, matchId: created.matchId, token: created.playerTokens.right, strategy: "random", seed: 2, pollMs: 5 })
+    runBot({ baseUrl, matchId: created.matchId, token: setup.playerTokens.left, strategy: "greedy", seed: 1, pollMs: 5 }),
+    runBot({ baseUrl, matchId: created.matchId, token: setup.playerTokens.right, strategy: "random", seed: 2, pollMs: 5 })
   ]);
   assert.equal(leftResult.status, "finished");
   assert.equal(rightResult.status, "finished");

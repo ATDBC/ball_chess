@@ -41,12 +41,16 @@ export class MatchApi {
     return payload;
   }
 
-  create(config) {
-    return this.request("/api/matches", { method: "POST", body: config });
+  create(request) {
+    return this.request("/api/matches", { method: "POST", body: request });
   }
 
   join(id, token, profile = {}) {
     return this.request(this.path(id, "/join"), { method: "POST", token, body: profile });
+  }
+
+  ready(id, token, ready) {
+    return this.request(this.path(id, "/ready"), { method: "POST", token, body: { ready } });
   }
 
   state(id, token) {

@@ -6,7 +6,7 @@ import { AgentSession } from "../../mcp/session.js";
 
 const PLAYER_STATE = {
   matchId: "m_test",
-  version: 2,
+  version: 4,
   status: "playing",
   config: { width: 9, height: 13, wallLimit: null, maxPlies: 300, turnTimeoutMs: null, firstPlayer: "left" },
   players: {
@@ -20,8 +20,8 @@ const PLAYER_STATE = {
   result: null,
   turnDeadlineAt: null,
   seats: {
-    left: { joined: true, profile: { name: "MCP agent", clientKind: "mcp" } },
-    right: { joined: true, profile: { name: "MCP agent", clientKind: "mcp" } }
+    left: { phase: "ready", profile: { displayName: "MCP agent", clientType: "mcp" }, invitation: null },
+    right: { phase: "ready", profile: { displayName: "MCP agent", clientType: "mcp" }, invitation: null }
   },
   yourPlayer: "left",
   yourTurn: true,
@@ -91,6 +91,36 @@ test("a failed shared join is cleared so the next state call can retry", async (
   const recovered = await session.getState();
   assert.equal(recovered.yourPlayer, "left");
   assert.equal(joinAttempts, 2);
+});
+
+test("setReady joins lazily and posts the requested boolean", async () => {
+  const requests = [];
+  const fetchImpl = async (url, options = {}) => {
+    requests.push({ url, options });
+    return new Response(JSON.stringify(PLAYER_STATE), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  };
+  const session = new AgentSession({
+    baseUrl: "http://127.0.0.1:7100",
+    matchId: "m_test",
+    token: "seat_secret",
+    fetchImpl
+  });
+
+  const state = await session.setReady(true);
+  assert.equal(state.status, "playing");
+  assert.deepEqual(requests.map(({ url, options }) => ({
+    path: new URL(url).pathname,
+    body: options.body && JSON.parse(options.body)
+  })), [
+    {
+      path: "/api/matches/m_test/join",
+      body: { displayName: "MCP agent", clientType: "mcp" }
+    },
+    { path: "/api/matches/m_test/ready", body: { ready: true } }
+  ]);
 });
 
 test("agent state compacts legal actions below the tool-result prune threshold", async () => {

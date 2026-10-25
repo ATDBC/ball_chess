@@ -18,6 +18,20 @@ test("submitAction forwards the bearer, version and untouched action", async () 
   assert.deepEqual(JSON.parse(calls[0].options.body), { expectedVersion: 2, action });
 });
 
+test("ready forwards the bearer and requested boolean", async () => {
+  const calls = [];
+  const api = new MatchApi({
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return { ok: true, json: async () => ({ status: "waiting" }) };
+    }
+  });
+  await api.ready("m_test", "seat_secret", false);
+  assert.equal(calls[0].url, "/api/matches/m_test/ready");
+  assert.equal(calls[0].options.headers.authorization, "Bearer seat_secret");
+  assert.deepEqual(JSON.parse(calls[0].options.body), { ready: false });
+});
+
 test("API errors preserve recovery state and structured details", async () => {
   const api = new MatchApi({
     fetchImpl: async () => ({

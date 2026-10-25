@@ -30,10 +30,13 @@ test("ascii shows both seats and never contains credentials", () => {
   assert.ok(!text.includes("Token"));
 });
 
-test("tool surface stays at the approved four tools", () => {
+test("tool surface includes explicit readiness", () => {
   assert.deepEqual(TOOL_DEFINITIONS.map((tool) => tool.name), [
-    "join_match", "get_match_state", "wait_for_turn", "submit_action"
+    "join_match", "set_ready", "get_match_state", "wait_for_turn", "submit_action"
   ]);
+  const ready = TOOL_DEFINITIONS.find((tool) => tool.name === "set_ready");
+  assert.deepEqual(ready.inputSchema.required, ["ready"]);
+  assert.equal(ready.inputSchema.properties.ready.type, "boolean");
   const wait = TOOL_DEFINITIONS.find((tool) => tool.name === "wait_for_turn");
   assert.deepEqual(wait.inputSchema.properties.timeoutSeconds.enum, [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
