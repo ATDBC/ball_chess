@@ -130,6 +130,15 @@ export function expandWallRanges(ranges) {
   return { h: expand(ranges.h), v: expand(ranges.v) };
 }
 
+export function projectRecord(record) {
+  const projected = structuredClone(record);
+  projected.actions = record.actions.map((entry) => ({
+    ...structuredClone(entry),
+    actionId: formatActionId(entry.action)
+  }));
+  return projected;
+}
+
 function rangeText(ranges) {
   if (!ranges.length) return "-";
   const rows = new Map();
@@ -197,6 +206,17 @@ function seatsText(seats) {
   return `seats=left:${seats.left.phase},right:${seats.right.phase}`;
 }
 export function renderAgentResult(result) {
+  if (result.kind === "record") {
+    const record = result.record;
+    const lines = [
+      `RECORD ${record.matchId} schema=${record.schemaVersion} plies=${record.actions.length}`,
+      `config=${JSON.stringify(record.config)}`,
+      ...record.actions.map((entry) => `${entry.ply}. ${entry.player} ${entry.actionId} at=${entry.at}`)
+    ];
+    if (record.result) lines.push(`outcome=${record.result.kind} winner=${record.result.winner ?? "none"} reason=${record.result.reason}`);
+    else lines.push("outcome=pending");
+    return lines.join("\n");
+  }
   const state = result.state;
   if (result.kind === "canceled") return "CANCELED: waiting stopped; the seat remains bound.";
   if (!state) return result.ok === false ? `ERROR ${result.error.code}: ${result.error.message}` : String(result.kind || "OK").toUpperCase();

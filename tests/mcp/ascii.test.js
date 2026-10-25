@@ -32,7 +32,7 @@ test("ascii shows both seats and never contains credentials", () => {
 
 test("tool surface joins by invitation without model-visible seat credentials", () => {
   assert.deepEqual(TOOL_DEFINITIONS.map((tool) => tool.name), [
-    "join_by_invite", "set_ready", "get_match_state", "wait_for_turn", "submit_action"
+    "join_by_invite", "set_ready", "get_match_state", "get_match_record", "wait_for_turn", "submit_action"
   ]);
   const join = TOOL_DEFINITIONS.find((tool) => tool.name === "join_by_invite");
   assert.deepEqual(join.inputSchema.required, ["code"]);
@@ -44,28 +44,14 @@ test("tool surface joins by invitation without model-visible seat credentials", 
   assert.deepEqual(wait.inputSchema.properties, {});
 });
 
-test("submit_action schema discriminates moves from wall placements", () => {
+test("submit_action accepts one copyable action id", () => {
   const submit = TOOL_DEFINITIONS.find((tool) => tool.name === "submit_action");
-  const variants = submit.inputSchema.properties.action.oneOf;
-  assert.deepEqual(variants.map((variant) => ({
-    type: variant.properties.type.const,
-    orientation: variant.properties.orientation?.const,
-    required: variant.required,
-    x: variant.properties.x?.enum,
-    y: variant.properties.y?.enum
-  })), [
-    { type: "move", orientation: undefined, required: ["type", "direction"], x: undefined, y: undefined },
-    {
-      type: "place_wall", orientation: "h", required: ["type", "orientation", "x", "y"],
-      x: [0, 1, 2, 3, 4, 5, 6, 7],
-      y: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-    },
-    {
-      type: "place_wall", orientation: "v", required: ["type", "orientation", "x", "y"],
-      x: [1, 2, 3, 4, 5, 6, 7, 8],
-      y: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-    }
-  ]);
+  assert.deepEqual(submit.inputSchema.required, ["expectedVersion", "actionId"]);
+  assert.deepEqual(submit.inputSchema.properties.actionId, {
+    type: "string",
+    description: "Copy one id from decision.legal, such as move:up or wall:v:3:4"
+  });
+  assert.equal(Object.hasOwn(submit.inputSchema.properties, "action"), false);
 });
 
 test("all advertised tool schemas stay inside the DSH-supported subset", () => {

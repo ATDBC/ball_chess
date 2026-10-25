@@ -1,10 +1,5 @@
 import { GameError } from "../core/errors.js";
-import { HEIGHT, WIDTH } from "../core/constants.js";
 import { renderAgentResult } from "../agent/projection.js";
-
-function integerRange(start, end) {
-  return Array.from({ length: end - start + 1 }, (_, index) => start + index);
-}
 
 export const TOOL_DEFINITIONS = [
   {
@@ -28,6 +23,11 @@ export const TOOL_DEFINITIONS = [
     inputSchema: { type: "object", properties: {}, additionalProperties: false }
   },
   {
+    name: "get_match_record",
+    description: "Get the complete action record for the bound match",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false }
+  },
+  {
     name: "wait_for_turn",
     description: "Wait through reconnects until your turn, game end, or cancellation",
     inputSchema: { type: "object", properties: {}, additionalProperties: false }
@@ -37,27 +37,12 @@ export const TOOL_DEFINITIONS = [
     description: "Submit an expected version and one listed legal action",
     inputSchema: {
       type: "object",
-      required: ["expectedVersion", "action"],
+      required: ["expectedVersion", "actionId"],
       properties: {
         expectedVersion: { type: "integer" },
-        action: {
-          oneOf: [
-            {
-              type: "object", required: ["type", "direction"],
-              properties: { type: { type: "string", const: "move" }, direction: { type: "string", enum: ["up", "down", "left", "right"] } },
-              additionalProperties: false
-            },
-            {
-              type: "object", required: ["type", "orientation", "x", "y"],
-              properties: { type: { type: "string", const: "place_wall" }, orientation: { type: "string", const: "h" }, x: { type: "integer", enum: integerRange(0, WIDTH - 2) }, y: { type: "integer", enum: integerRange(1, HEIGHT - 1) } },
-              additionalProperties: false
-            },
-            {
-              type: "object", required: ["type", "orientation", "x", "y"],
-              properties: { type: { type: "string", const: "place_wall" }, orientation: { type: "string", const: "v" }, x: { type: "integer", enum: integerRange(1, WIDTH - 1) }, y: { type: "integer", enum: integerRange(0, HEIGHT - 2) } },
-              additionalProperties: false
-            }
-          ]
+        actionId: {
+          type: "string",
+          description: "Copy one id from decision.legal, such as move:up or wall:v:3:4"
         }
       },
       additionalProperties: false
@@ -76,8 +61,9 @@ export async function handleTool(name, args, session, { signal } = {}) {
     case "join_by_invite": result = await session.joinByInvite(args.code, args.name); break;
     case "set_ready": result = await session.setReady(args.ready); break;
     case "get_match_state": result = resultForState(await session.getState()); break;
+    case "get_match_record": result = { kind: "record", record: await session.getRecord() }; break;
     case "wait_for_turn": result = await session.waitForTurn(signal); break;
-    case "submit_action": result = await session.submitAction(args.expectedVersion, args.action); break;
+    case "submit_action": result = await session.submitAction(args.expectedVersion, args.actionId); break;
     default: throw new GameError("UNKNOWN_TOOL", `Unknown tool: ${name}`);
   }
   return { structuredContent: result, content: [{ type: "text", text: renderAgentResult(result) }] };

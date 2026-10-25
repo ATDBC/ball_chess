@@ -1,5 +1,5 @@
 import { GameError } from "../core/errors.js";
-import { projectState } from "./projection.js";
+import { projectRecord, projectState } from "./projection.js";
 import { abortableDelay, readSseData } from "./sse.js";
 
 function bindingKey(kind, value) {
@@ -111,6 +111,11 @@ export class BallChessAgentClient {
   async getState() {
     const { matchId } = this.requireBinding();
     return projectState(await this.request(`/api/matches/${encodeURIComponent(matchId)}/state`));
+  }
+
+  async getRecord() {
+    const { matchId } = this.requireBinding();
+    return projectRecord(await this.request(`/api/matches/${encodeURIComponent(matchId)}/record`, { token: null }));
   }
 
   async submitAction(expectedVersion, action) {

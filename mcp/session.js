@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { BallChessAgentClient } from "../agent/client.js";
+import { parseActionId } from "../agent/action-id.js";
 
 export class AgentSession {
   constructor({ baseUrl, matchId = null, token = null, fetchImpl = fetch }) {
@@ -40,9 +41,14 @@ export class AgentSession {
     return this.client.getState();
   }
 
-  async submitAction(expectedVersion, action) {
+  async getRecord() {
     await this.ensureBound();
-    return this.client.submitAction(expectedVersion, action);
+    return this.client.getRecord();
+  }
+
+  async submitAction(expectedVersion, actionId) {
+    await this.ensureBound();
+    return this.client.submitAction(expectedVersion, parseActionId(actionId));
   }
 
   async waitForTurn(signal) {

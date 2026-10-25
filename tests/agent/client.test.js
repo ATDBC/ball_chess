@@ -63,3 +63,30 @@ test("HTTP errors keep stable recovery fields without request secrets", async ()
   assert.equal(result.state.version, 9);
   assert.ok(!JSON.stringify(result).includes("seat_secret"));
 });
+
+test("bound client projects the complete public match record", async () => {
+  const urls = [];
+  const client = new BallChessAgentClient({
+    baseUrl: "http://local.test",
+    binding: { matchId: "m_one", seat: "left", playerToken: "seat_secret" },
+    fetchImpl: async (url) => {
+      urls.push(url);
+      return response({
+        schemaVersion: 1,
+        matchId: "m_one",
+        config: { wallLimit: null, maxPlies: 300, turnTimeoutMs: null, firstPlayer: "left" },
+        actions: [
+          { player: "left", ply: 1, action: { type: "move", direction: "up" }, at: 100 },
+          { player: "right", ply: 2, action: { type: "place_wall", orientation: "v", x: 3, y: 4 }, at: 200 }
+        ],
+        result: null,
+        createdAt: 10,
+        updatedAt: 200
+      });
+    }
+  });
+  const record = await client.getRecord();
+  assert.equal(urls[0], "http://local.test/api/matches/m_one/record");
+  assert.deepEqual(record.actions.map((entry) => entry.actionId), ["move:up", "wall:v:3:4"]);
+  assert.ok(!JSON.stringify(record).includes("seat_secret"));
+});
