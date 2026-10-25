@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { createGame, otherPlayer } from "../core/state.js";
 import { applyAction, settleCurrentTurn } from "../core/engine.js";
 import { listLegalActions } from "../core/legal.js";
@@ -5,6 +6,53 @@ import { GameError } from "../core/errors.js";
 
 function deadlineFor(record, now) {
   return record.config.turnTimeoutMs === null ? null : now + record.config.turnTimeoutMs;
+}
+
+function corrupt(message) {
+  throw new Error(`Invalid match record: ${message}`);
+}
+
+function isExternalResult(result, game) {
+  if (result?.reason === "admin_abort") {
+    return result.kind === "aborted" && result.winner === null;
+  }
+  if (result?.reason === "turn_timeout") {
+    return result.kind === "win" && result.winner === otherPlayer(game.currentPlayer);
+  }
+  return false;
+}
+
+function expectedStatus(record, result) {
+  if (result !== null) return "finished";
+  return record.joined.left && record.joined.right ? "playing" : "waiting";
+}
+
+function assertMetadata(record, replayResult) {
+  for (const seat of ["left", "right"]) {
+    if (record.joined[seat] !== (record.profiles[seat] !== null)) {
+      corrupt(`profiles.${seat} contradicts joined.${seat}`);
+    }
+  }
+  if (record.updatedAt < record.createdAt) corrupt("updatedAt precedes createdAt");
+  let previousAt = record.createdAt;
+  for (const [index, entry] of record.actions.entries()) {
+    if (entry.at < previousAt || entry.at > record.updatedAt) corrupt(`actions[${index}].at is out of order`);
+    previousAt = entry.at;
+  }
+  const externalIncrement = record.result !== null && replayResult === null ? 1 : 0;
+  const expectedVersion = Number(record.joined.left) + Number(record.joined.right)
+    + record.actions.length + externalIncrement;
+  if (record.version !== expectedVersion) corrupt("version contradicts accepted mutations");
+  const status = expectedStatus(record, record.result);
+  if (record.status !== status) corrupt("status contradicts the record");
+  if (status === "playing") {
+    const expectedDeadline = record.config.turnTimeoutMs === null
+      ? null
+      : record.updatedAt + record.config.turnTimeoutMs;
+    if (record.turnDeadlineAt !== expectedDeadline) corrupt("turnDeadlineAt contradicts the active turn");
+  } else if (record.turnDeadlineAt !== null) {
+    corrupt("turnDeadlineAt exists outside an active timed turn");
+  }
 }
 
 export function createMatchRecord({ id, adminToken, playerTokens, config, now = Date.now() }) {
@@ -63,10 +111,26 @@ export function serializeMatch(record) {
 }
 
 export function restoreMatch(raw) {
-  let game = createGame(raw.config);
-  for (const entry of raw.actions) game = applyAction(game, entry.player, entry.action);
-  game.result = structuredClone(raw.result);
-  return { ...structuredClone(raw), game };
+  const record = structuredClone(raw);
+  let game = createGame(record.config);
+  for (const [index, entry] of record.actions.entries()) {
+    game = applyAction(game, entry.player, entry.action);
+    if (game.plies !== entry.ply) corrupt(`actions[${index}].ply contradicts replay`);
+  }
+
+  const replayResult = structuredClone(game.result);
+  if (replayResult !== null) {
+    if (!isDeepStrictEqual(record.result, replayResult)) corrupt("result contradicts replay");
+  } else if (record.result !== null) {
+    if (!isExternalResult(record.result, game)) corrupt("result contradicts replay");
+    if (record.result.reason === "turn_timeout" && !(record.joined.left && record.joined.right)) {
+      corrupt("turn timeout exists before both seats joined");
+    }
+    game.result = structuredClone(record.result);
+  }
+
+  assertMetadata(record, replayResult);
+  return { ...record, game };
 }
 
 export function joinMatchRecord(record, seat, profile, now = Date.now()) {
