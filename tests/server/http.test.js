@@ -6,10 +6,10 @@ import { MatchStore } from "../../server/store.js";
 import { MatchService } from "../../server/match-service.js";
 import { createApp } from "../../server/app.js";
 
-async function fixture(t) {
+async function fixture(t, dependencies = {}) {
   await mkdir(path.join(process.cwd(), ".tmp"), { recursive: true });
   const directory = await mkdtemp(path.join(process.cwd(), ".tmp", "http-"));
-  const service = await MatchService.open({ store: new MatchStore({ directory }) });
+  const service = await MatchService.open({ store: new MatchStore({ directory }), ...dependencies });
   const server = createApp({ service, webRoot: path.resolve("web"), coreRoot: path.resolve("core") });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -136,4 +136,35 @@ test("request validation and admin setup do not expose the admin token", async (
   const staticCore = await fetch(`${base}/core/state.js`);
   assert.equal(staticCore.status, 200);
   assert.match(staticCore.headers.get("content-type"), /javascript/);
+});
+
+test("an action at the deadline returns the committed timeout state", async (t) => {
+  let now = 1_000;
+  const { base } = await fixture(t, {
+    now: () => now,
+    setTimer: () => ({ unref() {} }),
+    clearTimer() {}
+  });
+  const created = await createMatch(base, { maxPlies: 40, turnTimeoutMs: 10 });
+  await join(base, created, "left");
+  await join(base, created, "right");
+  now = 1_010;
+
+  const response = await fetch(`${base}/api/matches/${created.matchId}/actions`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${created.playerTokens.left}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      expectedVersion: 2,
+      action: { type: "move", direction: "up" }
+    })
+  });
+  const body = await response.json();
+  assert.equal(response.status, 409);
+  assert.equal(body.error.code, "TURN_EXPIRED");
+  assert.equal(body.state.version, 3);
+  assert.equal(body.state.result.reason, "turn_timeout");
+  assert.equal(body.state.plies, 0);
 });

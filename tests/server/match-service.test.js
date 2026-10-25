@@ -5,12 +5,13 @@ import path from "node:path";
 import { MatchStore } from "../../server/store.js";
 import { MatchService } from "../../server/match-service.js";
 
-async function fixture(t, options = {}) {
+async function fixture(t, options = {}, dependencies = {}) {
   await mkdir(path.join(process.cwd(), ".tmp"), { recursive: true });
   const directory = await mkdtemp(path.join(process.cwd(), ".tmp", "matches-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const store = new MatchStore({ directory });
-  const service = await MatchService.open({ store });
+  const service = await MatchService.open({ store, ...dependencies });
+  t.after(() => service.close());
   const created = await service.create({ maxPlies: 40, ...options });
   await service.join(created.matchId, created.playerTokens.left, { name: "L", clientKind: "test" });
   await service.join(created.matchId, created.playerTokens.right, { name: "R", clientKind: "test" });
@@ -81,4 +82,30 @@ test("random first player is resolved once into the public config", async (t) =>
   const state = await service.getState(created.matchId);
   assert.ok(["left", "right"].includes(state.config.firstPlayer));
   assert.equal(state.currentPlayer, state.config.firstPlayer);
+});
+
+test("deadline wins when an action arrives exactly at the deadline", async (t) => {
+  let now = 1_000;
+  const scheduled = [];
+  const { service, created } = await fixture(t, { turnTimeoutMs: 10 }, {
+    now: () => now,
+    setTimer: (callback, delay) => {
+      const timer = { callback, delay, unref() {} };
+      scheduled.push(timer);
+      return timer;
+    },
+    clearTimer() {}
+  });
+  assert.equal(scheduled.at(-1).delay, 10);
+
+  now = 1_010;
+  await assert.rejects(
+    service.submitAction(created.matchId, created.playerTokens.left, 2, { type: "move", direction: "up" }),
+    (error) => error.code === "TURN_EXPIRED"
+  );
+
+  const state = await service.getState(created.matchId);
+  assert.equal(state.version, 3);
+  assert.equal(state.plies, 0);
+  assert.deepEqual(state.result, { kind: "win", winner: "right", reason: "turn_timeout" });
 });

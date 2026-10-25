@@ -4,7 +4,7 @@ import { assertBodyKeys, getBearer, readJson, sendError, sendJson } from "./http
 import { serveStatic } from "./static.js";
 import { SseHub } from "./sse.js";
 
-const ACTION_STATE_ERRORS = new Set(["STALE_STATE", "NOT_YOUR_TURN", "ILLEGAL_ACTION", "MATCH_FINISHED"]);
+const ACTION_STATE_ERRORS = new Set(["STALE_STATE", "NOT_YOUR_TURN", "ILLEGAL_ACTION", "MATCH_FINISHED", "TURN_EXPIRED"]);
 
 export function createApp({ service, webRoot, coreRoot }) {
   const hub = new SseHub();
