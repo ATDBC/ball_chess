@@ -35,14 +35,15 @@ npm.cmd run dev
 1. 在“新建对局”中选择自己的席位，或选择“仅观战”；设置墙体、行动上限、回合超时和先手后创建。
 2. 创建者页面会显示每个席位的独立 MCP 配置与提示词。席位令牌只进入对应配置的子进程环境，不进入提示词；不要把管理员令牌当作玩家令牌使用。
 3. 另一名玩家在“加入或观战”中输入对局 ID 和自己的玩家令牌；只输入对局 ID、留空令牌即可观战。
-4. 轮到你时选择“移动一球”或“放置挡板”。放墙模式可切换横/竖方向；等待对方和观战时操作锁定。
-5. 页面通过 SSE 接收权威快照，断线后会自动重连并重新拉取状态。服务重启后可根据持久化记录恢复。
+4. 玩家占席后点击“准备”；开局前可取消准备，双方都准备后才开始第一回合。
+5. 轮到你时选择“移动一球”或“放置挡板”。放墙模式可切换横/竖方向；等待对方和观战时操作锁定。
+6. 页面通过 SSE 接收权威快照，断线后会自动重连并重新拉取状态。服务重启后可根据持久化记录恢复。
 
 创建者浏览器保存对局 ID 与管理员令牌以恢复管理界面；直接加入者只保存自己的席位令牌。它们位于当前源的 `localStorage["ballChess.activeMatch"]`，请勿在不受信任的浏览器或共享账户中保留。
 
 ## 程序 bot
 
-先通过页面或 `POST /api/matches` 创建对局并取得对局 ID 与两个玩家令牌，然后为每个席位运行独立客户端。以下示例适用于 Git Bash：
+先通过页面或 `POST /api/matches` 创建对局。创建接口不会返回整组玩家令牌；管理员可暂时通过 `GET /api/matches/:id/setup` 取得兼容用席位令牌，然后为每个席位运行独立客户端。bot 会依次占席、发送 ready，再进入行动循环。以下示例适用于 Git Bash：
 
 ```bash
 node examples/bot.js --url http://127.0.0.1:7100 --match "$MATCH_ID" --token "$LEFT_TOKEN" --strategy greedy
@@ -55,14 +56,31 @@ node examples/bot.js --url http://127.0.0.1:7100 --match "$MATCH_ID" --token "$R
 
 | 方法与路径 | 用途 |
 |---|---|
-| `POST /api/matches` | 创建对局 |
+| `POST /api/matches` | 以 `{ config, claim? }` 创建对局；可原子占一个席位 |
 | `POST /api/matches/:id/join` | 玩家令牌加入或重连 |
+| `POST /api/matches/:id/ready` | 玩家以 `{ ready: boolean }` 准备或取消准备 |
+| `POST /api/matches/:id/invitations` | 管理员为指定空席生成十分钟邀请码 |
+| `POST /api/invitations/redeem` | 以邀请码、128 位兑换 ID 和玩家资料占席 |
 | `GET /api/matches/:id/state` | 公共或玩家视角状态 |
-| `GET /api/matches/:id/setup` | 管理员恢复席位令牌与 MCP 配置 |
+| `GET /api/matches/:id/setup` | 管理员恢复席位令牌与 MCP 配置的临时兼容接口 |
 | `POST /api/matches/:id/actions` | 提交 `expectedVersion + action` |
 | `GET /api/matches/:id/events` | 公共 SSE 快照 |
 | `GET /api/matches/:id/record` | 去令牌棋谱 |
 | `POST /api/matches/:id/abort` | 管理员中止 |
+
+创建请求示例：
+
+```json
+{
+  "config": { "maxPlies": 300, "turnTimeoutMs": null, "firstPlayer": "left" },
+  "claim": {
+    "seat": "left",
+    "profile": { "displayName": "浏览器玩家", "clientType": "browser" }
+  }
+}
+```
+
+不传 `claim` 时只返回管理员凭据；传入 `claim` 时额外返回该席位的 `seat` 与 `playerToken`，不会返回另一个席位的令牌。席位公开阶段为 `open`、`claimed` 或 `ready`。邀请码使用 128 位随机值，服务端只持久化 SHA-256 摘要；兑换请求的 `redemptionId` 是客户端生成的 32 位十六进制字符串。同一兑换 ID 可安全重试并取得同一席位凭据，其他兑换 ID 会收到 `INVITE_CONSUMED`。
 
 ## MCP agent
 
@@ -90,13 +108,14 @@ node examples/bot.js --url http://127.0.0.1:7100 --match "$MATCH_ID" --token "$R
 
 每个 agent 使用独立的 stdio 进程和独立席位令牌。配置不含管理员令牌，但包含所选席位令牌，因此必须按凭据保管。带 `--match` 启动时，适配器从 `BALL_CHESS_PLAYER_TOKEN` 取得令牌，在第一个状态、等待或行动调用前幂等加入；子进程重启后会以同一配置重新绑定。一个 MCP 进程只能绑定一个对局席位。
 
-预绑定进程向 agent 提供三个工具：
+预绑定进程向 agent 提供四个工具：
 
+- `set_ready`：占席后发送或取消 ready；双方都发送 `ready: true` 后开始。
 - `get_match_state`：获取 JSON 状态、ASCII 棋盘与合法行动。
 - `wait_for_turn`：通过 SSE 等待自己回合或终局；单次等待最多 15 秒，等待超时不代表输棋。
 - `submit_action`：携带最新 `expectedVersion` 提交一个 `legalActions` 中的行动；遇到 `STALE_STATE` 或 `ILLEGAL_ACTION` 时读取返回状态后重新选择。
 
-不带 `--match` 的通用 MCP 进程还提供 `join_match`，供需要在工具调用中手动绑定的客户端使用。MCP 状态把 HTTP 的完整行动对象压缩为 `legalActions.moves` 和按 `h`、`v` 分组的 `legalActions.walls` 锚点；提交时仍使用标准 `move` 或 `place_wall` 行动对象。
+不带 `--match` 的通用 MCP 进程还提供 `join_match`，供需要在工具调用中手动绑定的客户端使用。加入后必须调用 `set_ready`，不要在 `status = waiting` 时尝试行动。MCP 状态把 HTTP 的完整行动对象压缩为 `legalActions.moves` 和按 `h`、`v` 分组的 `legalActions.walls` 锚点；提交时仍使用标准 `move` 或 `place_wall` 行动对象。
 
 平台不会自动启动 Kimi、Claude、Codex 或其他第三方 agent，也不保存模型 API 密钥。自动测试验证了标准 MCP 与两个独立 stdio 测试客户端，不声称已逐一验证所有第三方厂商。
 
@@ -106,6 +125,7 @@ node examples/bot.js --url http://127.0.0.1:7100 --match "$MATCH_ID" --token "$R
 - 持久化文件包含私密令牌，**不要分享该目录**。`GET /record` 导出的棋谱会移除玩家和管理员令牌。
 - 页面生成的预绑定 MCP 配置包含一个席位令牌；不要把该配置粘贴到模型消息、会话记录或公共日志中。
 - 回合计时按持久化截止时间恢复。载入时会校验记录字段并重放全部行动；字段、版本、状态、截止时间或结果互相矛盾的记录会被隔离且不会自动覆盖。
+- 新建和后续写入使用持久化记录 v2：保存席位阶段、`startedAt` 和邀请码消费回执，不保存可推导的对局状态。合法 v1 记录会先严格校验和重放，再在内存迁移；仅加载不会改写原文件，下一次权威变更才写成 v2。
 - 默认仅绑定本机回环地址，不开放 CORS，也不承诺公网部署安全。显式修改监听地址不等于完成公网加固。
 
 ## 验证
